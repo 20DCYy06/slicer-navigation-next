@@ -1,4 +1,5 @@
 from pathlib import Path
+import math
 import sys
 import unittest
 
@@ -14,7 +15,7 @@ from slicer_navigation.observed_space import preparation_candidate
 FOOTPRINT = ((-.145, -.14), (.2, -.14), (.2, .14), (-.145, .14))
 
 
-def test_grid(occupancy):
+def make_grid(occupancy):
     grid = OccupancyGrid()
     grid.header.frame_id = "odom"
     grid.info.resolution = .05
@@ -33,7 +34,7 @@ class PreparationSpaceTest(unittest.TestCase):
         self.pose.orientation.w = 1.0
 
     def test_known_straight_footprint_with_unknown_cells_alongside(self):
-        grid = test_grid(lambda x, y: 0 if -.25 < x < 2.3 and abs(y) < .18 else -1)
+        grid = make_grid(lambda x, y: 0 if -.25 < x < 2.3 and abs(y) < .18 else -1)
         self.assertEqual(preparation_candidate(grid, self.pose, FOOTPRINT, 2.0), (2.0, 0.0, 0.0))
 
     def test_unknown_or_occupied_cell_in_footprint_blocks_corridor(self):
@@ -44,7 +45,7 @@ class PreparationSpaceTest(unittest.TestCase):
                         return occupied
                     return 0 if -.25 < x < 2.3 and abs(y) < .18 else -1
 
-                self.assertIsNone(preparation_candidate(test_grid(occupancy), self.pose, FOOTPRINT, 2.0))
+                self.assertIsNone(preparation_candidate(make_grid(occupancy), self.pose, FOOTPRINT, 2.0))
 
     def test_sideways_corridor_requires_a_clear_turn_to_enter(self):
         def occupancy(x, y):
@@ -52,4 +53,9 @@ class PreparationSpaceTest(unittest.TestCase):
                 return 0
             return -1
 
-        self.assertIsNone(preparation_candidate(test_grid(occupancy), self.pose, FOOTPRINT, 2.0))
+        grid = make_grid(occupancy)
+        self.pose.orientation.z = self.pose.orientation.w = math.sqrt(.5)
+        target = preparation_candidate(grid, self.pose, FOOTPRINT, 2.0)
+        self.assertAlmostEqual(target[1], 2.0)
+        self.pose.orientation.z, self.pose.orientation.w = 0.0, 1.0
+        self.assertIsNone(preparation_candidate(grid, self.pose, FOOTPRINT, 2.0))
