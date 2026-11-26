@@ -1,0 +1,6 @@
+uint8 channel
+uint16 pulse_us
+---
+bool accepted
+bool acknowledged
+string reason

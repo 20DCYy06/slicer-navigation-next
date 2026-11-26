@@ -1,0 +1,64 @@
+# LOCAL_POSE accepts map only. WGS84 uses decimal degrees and ENU yaw.
+uint8 LOCAL_POSE=1
+uint8 WGS84=2
+uint8 mode
+geometry_msgs/PoseStamped local_target
+float64 latitude_deg
+float64 longitude_deg
+bool has_altitude
+float64 altitude_ellipsoid_m
+bool has_yaw
+float64 yaw_enu_rad
+float64 xy_tolerance_m
+float64 yaw_tolerance_rad
+duration timeout
+bool require_geographic_verification
+---
+uint16 SUCCESS=0
+uint16 CANCELED=1
+uint16 REPLACED=2
+uint16 INVALID_GOAL=3
+uint16 LOCALIZATION_UNAVAILABLE=4
+uint16 ALIGNMENT_SPACE_INSUFFICIENT=5
+uint16 OUTSIDE_MAP=6
+uint16 NO_PATH=7
+uint16 MANUAL_OVERRIDE=8
+uint16 ESTOP=9
+uint16 BASE_FAULT=10
+uint16 TIMEOUT=11
+uint16 GEOGRAPHIC_VERIFICATION_FAILED=12
+uint16 STOP_NOT_CONFIRMED=13
+uint16 HELD=14
+
+uint16 code
+string reason
+bool stop_commanded
+bool stop_valid
+bool stopped
+bool position_error_valid
+float64 position_error_m
+bool yaw_error_valid
+float64 yaw_error_rad
+string error_source
+float64 latitude_deg
+float64 longitude_deg
+bool has_altitude
+float64 altitude_ellipsoid_m
+---
+uint8 IDLE=0
+uint8 PREPARING=1
+uint8 PLANNING=2
+uint8 NAVIGATING=3
+uint8 VERIFYING=4
+uint8 STOPPING=5
+
+uint8 phase
+string goal_id
+bool remaining_distance_valid
+float64 remaining_distance_m
+geometry_msgs/TwistStamped velocity
+bool velocity_valid
+string reason
+geometry_msgs/PoseStamped projected_target
+bool projected_target_valid
+uint64 transform_version

@@ -1,0 +1,7 @@
+# Internal. Disable compares goal_id. Enable compares the observed control epoch.
+string goal_id
+bool enable
+uint64 control_epoch
+---
+bool accepted
+string reason

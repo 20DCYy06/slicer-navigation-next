@@ -1,0 +1,13 @@
+/build/
+/devel/
+/install/
+/sdk/
+/deps/
+/src/third_party/
+/src/CMakeLists.txt
+/.catkin_workspace
+/releases/
+/field-data/
+__pycache__/
+.pytest_cache/
+*.pyc
