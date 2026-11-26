@@ -52,6 +52,9 @@ roslaunch slicer_bringup ugv.launch
    `enable_gnss_fusion` 独立控制 GNSS xy 纠偏。已配置的 NTRIP 通过 `ntrip:=true` 与
    `ntrip_credentials_file:=/home/ugv/.config/slicer/ntrip_credentials.json` 选择受保护凭据。
    UI 显示定位状态与服务端投影。要求地理复核时，需要停稳后取得同历元不确定度可用的新 RTK Fixed。
+   当前 UM982 的默认输出包含 GGA/GSA/GSV/RMC。实测可在 GNSS 串口独占、底盘停止时
+   向当前接收机端口临时启用 `GPGST 1`，获得 1 Hz GST。现场可按接收机手册用
+   `UNLOG GPGST` 撤销这项输出；本候选使用易失设置。 [UM982 指令手册](https://en.unicore.com/uploads/file/20241219/Unicore_Reference_Commands_Manual_For_N4_High_Precision_Products_V2_EN_R1.4.pdf)
 
 UI 普通关闭会尝试取消其目标。先使用取消并观察反馈，再结束现场会话。录包也可通过
 `rosrun slicer_bringup record_run.py --output <目录> --manifest <候选的 release.json>` 运行，

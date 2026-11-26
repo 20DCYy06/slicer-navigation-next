@@ -73,3 +73,9 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - `f85717a` 候选另行安装了等待 Release 状态的已验证 UI。现场用过的 41a5150 仍保留，用于对照实车运行。
 
 - 室内被动 GNSS 检查收到 GGA/GSA/RMC/GSV，全部有效性状态为无 Fix。随后使用现车 NTRIP 配置、仅启动 GNSS 的 45 s 读数中，1,017 个质量快照的 GGA 质量均为 0，差分客户端处于 `waiting_gga`，没有同历元 GST。这两次未提供可开始 WGS84 准备动作的证据。记录 `field-data/verification/field-gnss-passive-rSNwj5`、`field-data/verification/gnss-configured-site-A5sChk`。
+
+### 室外真实 RTK 与首个 WGS84 预检
+
+- 室外首次静态 75 s 有效 GGA 最高质量 2。第二次核对实际回注后收到 670 帧可用 Fixed，23 星，NTRIP 收到 352 个 RTCM 帧且串口写入年龄约 0.134 s。原输出无 GST。证据 `field-data/verification/gnss-outdoors-o9xO4J`、`field-data/verification/gnss-outdoors-rtcm-OCdauA`。
+- 按 UM982 官方手册，在接收机当前端口临时启用 1 Hz GST。6 帧都与 GGA 同 UTC 时刻，纬度/经度 1σ 约 0.026/0.029–0.030 m。现场将天线正下方的地面点标记为 base_link 停车目标，另一次静态记录取五个有同历元 GST 的 Fixed 中位数，水平散布 0.027 m。证据 `field-data/verification/gnss-outdoors-gst-ESPLM7` 与 `field-data/verification/field-wgs84-target-lXNcwk`。
+- 预检在 3.74 m 与 1.80 m 起点因路线距离拒绝；连续独立 Fixed 确认最后起点稳定在 2.70 m 左右。该起点的 2.657 m 运行预检触发配准走廊检查，录包没有任何 Action goal 或非零底盘速度。离线用录包的同帧栅格，旧配准圆形包络在全局和局部图都拒绝，既有 Guard 的实际足迹在高分辨率局部图沿 .4、1.2、2.0、2.757 m 直线均可通行。证据 `field-data/verification/field-wgs84-measured-f85717a-O4rg7Z`。下一候选针对这一个差异修复。
