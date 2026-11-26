@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """Project FAST-LIO into a fixed planar chassis reference without publishing TF."""
-import math
-
 import numpy as np
 import rospy
-from geometry_msgs.msg import TwistWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from tf.transformations import euler_from_matrix, quaternion_from_euler, quaternion_matrix
 
@@ -18,10 +15,8 @@ class LioProjector:
         self.variances = rospy.get_param("~lio_pose_variance")
         self.origin = None
         self.last_stamp = rospy.Time()
-        self.last_position = None
         self.local = rospy.Publisher("/lio/odom", Odometry, queue_size=5)
         self.map_reference = rospy.Publisher("/lio/map_reference", Odometry, queue_size=5)
-        self.motion = rospy.Publisher("/lio/body_motion", TwistWithCovarianceStamped, queue_size=5)
         self.input = rospy.Subscriber("/Odometry", Odometry, self.project, queue_size=5)
 
     def project(self, msg):
@@ -43,7 +38,6 @@ class LioProjector:
             world_to_origin[:3, 3] = world_to_base[:3, 3]
             self.origin = np.linalg.inv(world_to_origin)
 
-        dt = (msg.header.stamp - self.last_stamp).to_sec()
         self.last_stamp = msg.header.stamp
         origin_to_base = self.origin @ world_to_base
         yaw = euler_from_matrix(origin_to_base)[2]
@@ -61,29 +55,6 @@ class LioProjector:
         self.local.publish(out)
         out.header.frame_id = "map"
         self.map_reference.publish(out)
-        position = origin_to_base[:2, 3].copy()
-        if self.last_position is not None and .02 <= dt <= .25:
-            self.publish_motion(position - self.last_position, yaw, dt, out.header.stamp)
-        self.last_position = position
-
-    def publish_motion(self, increment, yaw, dt, stamp):
-        # Ending-at-stamp average velocity, resolved in the chassis frame
-        # at the end of the interval. Pose variances are propagated as
-        # independent endpoint errors before dividing by the squared interval.
-        cosine, sine = math.cos(yaw), math.sin(yaw)
-        map_to_body = np.array([[cosine, sine], [-sine, cosine]])
-        velocity = map_to_body @ increment / dt
-        covariance = map_to_body @ np.diag(self.variances[:2]) @ map_to_body.T
-        covariance *= 2.0 / dt ** 2
-        out = TwistWithCovarianceStamped()
-        out.header.stamp = stamp
-        out.header.frame_id = "base_link"
-        out.twist.twist.linear.x, out.twist.twist.linear.y = map(float, velocity)
-        for index in range(6):
-            out.twist.covariance[index * 7] = 1e6
-        for index, value in zip((0, 1, 6, 7), covariance.flat):
-            out.twist.covariance[index] = value
-        self.motion.publish(out)
 
 
 if __name__ == "__main__":

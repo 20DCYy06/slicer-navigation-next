@@ -59,11 +59,7 @@ def geographic_goal(east_m):
                                timeout=rospy.Duration(40), require_geographic_verification=True)
 
 
-def main():
-    rospy.init_node("slicer_geographic_loop_check")
-    wait_for(lambda: rospy.has_param("/slicer_lio_projector/base_to_laser")
-             and rospy.has_param("/slicer_lio_projector/fast_lio/mapping"))
-    plant = GeographicPlant()
+def check(plant):
     snapshots = []
     grids = deque(maxlen=1)
     fused_inputs = deque(maxlen=8)
@@ -115,6 +111,21 @@ def main():
     else:
         assert not fused_inputs
     print(f"Simulated WGS84 preparation cancel and verified arrival passed ({plant.x:.3f} m final)")
+
+
+def main():
+    rospy.init_node("slicer_geographic_loop_check")
+    wait_for(lambda: rospy.has_param("/slicer_lio_projector/base_to_laser")
+             and rospy.has_param("/slicer_lio_projector/fast_lio/mapping"))
+    plant = GeographicPlant()
+    try:
+        check(plant)
+    finally:
+        timers = (plant.fix_timer, plant.timer)
+        for timer in timers:
+            timer.shutdown()
+        for timer in timers:
+            timer.join(timeout=1.0)
 
 
 if __name__ == "__main__":

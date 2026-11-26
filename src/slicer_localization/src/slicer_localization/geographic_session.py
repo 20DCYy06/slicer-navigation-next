@@ -286,6 +286,10 @@ class GeographicSession:
             return ArrivalCheck(reason="Waiting for a new synchronized RTK fix after stopping")
         if not measured.covariance_measured:
             return ArrivalCheck(reason="Receiver uncertainty unavailable for geographic verification")
+        xx, xy, _, yy = measured.covariance
+        largest_variance = 0.5 * (xx + yy + math.hypot(xx - yy, 2.0 * xy))
+        if not largest_variance <= tolerance_m ** 2:
+            return ArrivalCheck(reason="Horizontal uncertainty exceeds geographic arrival tolerance")
         error = math.hypot(measured.x - goal.x, measured.y - goal.y)
         return ArrivalCheck(True, error <= tolerance_m, error, measured.stamp_ns,
                             "" if error <= tolerance_m else "Geographic position outside arrival tolerance")

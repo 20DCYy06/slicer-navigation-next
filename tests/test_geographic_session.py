@@ -2,6 +2,7 @@ import math
 import pathlib
 import sys
 import unittest
+from dataclasses import replace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]
                        / "src/slicer_localization/src"))
@@ -191,6 +192,12 @@ class GeographicSessionTest(unittest.TestCase):
         pending = stamp + 10_000_000
         session.observe(observation(pending, antenna), pending + 20)
         self.assertTrue(session.verify(projected, last_stamp, pending + 20, 0.2).valid)
+        broad = pending + 10_000_000
+        session.add_map_pose(PlanarPose(broad, sample.x, sample.y, sample.yaw))
+        session.add_lio_pose(PlanarPose(broad, sample.x, sample.y, sample.yaw))
+        uncertain = replace(observation(broad, antenna), covariance_en=(0.25, 0.0, 0.0, 0.25))
+        session.observe(uncertain, broad + 20)
+        self.assertIn("uncertainty", session.verify(projected, last_stamp, broad + 20, 0.2).reason)
         session.add_map_pose(PlanarPose(stamp - 1, 999.0, 999.0, 0.0))
         self.assertFalse(session.verify(projected, last_stamp, stamp + 20, 0.2).valid)
 
