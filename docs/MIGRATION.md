@@ -192,3 +192,8 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - Motor OFF 下确认 12V 回接、四轮零 PWM、MCU 零目标、雷达走廊和五组停稳 Fixed/GST。用户在车侧确认后打开 Motor，封存候选 `c432b85` 只发送一条 1.08 m 本地目标，38 s 单次期限和 0.10 m/s 上限。录包同时收到目标、底盘仲裁、MCU 目标与速度、定位和 RTK。17.492 s 返回 `SUCCESS`，map 残差 0.1801 m，实测停稳并进入 Hold，输出归零，17 次全局规划均有效。
 - 同一录包的前向输出、MCU 接受的目标和 MCU 实测速度积分为 0.8943、0.8932、0.8984 m，峰值为 0.100、0.100、0.104 m/s。停稳端点位移分别为轮速 0.8841 m、LIO 0.9096 m、双级 EKF 0.9091 m、独立 RTK 天线 0.8938 m，两端五组 Fixed/GST 的散布为 0.021/0.011 m。LIO 端点航向差约 7.86°。轮速差推得的航向约 15.52°，定位航向仍使用 LIO；原地偏航另以 MCU 陀螺仪和 LIO 对照。证据 `field-data/verification/field-v110-verification-tools-j5YmNe/straight`。结束停稳并释放两路设备。
 - 用户确认车周空地与实体 Motor ON 后，封存候选只发送一条原地左转 20° 的目标，3.042 s 返回 `SUCCESS` 并实测停稳、回 Hold。结果航向残差 0.0454 rad（2.6°），map 平移残差 0.0145 m。仲裁和 MCU 目标角速度峰值均为 0.250 rad/s，MCU 实际峰值 0.277 rad/s。MCU 陀螺仪积分 16.86°，LIO 和局部 EKF 端点变化 17.21°、17.23°。轮速差推得 31.16°，两级 EKF 继续以 LIO 为航向来源。RTK 天线端点差 0.0366 m，包含转动杆臂。证据 `field-data/verification/field-v110-verification-tools-j5YmNe/yaw`。结束释放两路设备并撤销临时 GST。
+
+### V1.10 实时 RTK 融合开启的室外 WGS84 到点
+
+- Motor OFF 下在新地面标记取五个同历元 Fixed/GST，散布 0.020 m。用户手推后最终实测起点距标记 2.63 m，观察到完整直行走廊、起点净距、零 PWM 和停稳。开启实时 GNSS xy 融合和临时 GST，以封存 `c432b85`、0.10 m/s 指令上限发送一条经用户确认的 WGS84 目标。
+- 约 17.20 s 进入配准停稳，18.75 s 已提交版本 1 并投影，18.85 s 进入地理导航。停稳复核后 40.987 s 返回 `SUCCESS`，独立 `gnss_xy` 误差 0.16994 m，0.165 s 后录到 Hold 确认。仲裁前向指令峰值 0.100 m/s，MCU 实测峰值 0.105 m/s。录包 820 个 GGA 质量均为 Fixed，41 个匹配 GST；配准后发出 448 个带源时间戳的 GNSS xy 融合观测。运行结束关闭两路串口，撤销 GST。导航及融合专用录包位于 `field-data/verification/field-wgs84-v110-06Eeiu/wgs84`。
