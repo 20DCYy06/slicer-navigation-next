@@ -1,0 +1,27 @@
+<launch>
+  <arg name="hardware_enabled" default="false"/>
+  <arg name="hardware_root" default=""/>
+  <arg name="hardware_config" default="$(find slicer_base)/config/c30d_v19.yaml"/>
+  <arg name="driver_mock" default="false"/>
+  <arg name="gamepad_enabled" default="$(arg hardware_enabled)"/>
+  <arg name="gamepad_device" default=""/>
+  <arg name="costmap_topic" default="/ugv/internal/move_base/local_costmap/costmap"/>
+  <arg name="lio_topic" default="/lio/odom"/>
+
+  <node pkg="slicer_base" type="velocity_mux.py" name="slicer_velocity_mux" output="screen">
+    <param name="hardware_config" value="$(arg hardware_config)"/>
+    <param name="costmap_topic" value="$(arg costmap_topic)"/>
+    <param name="lio_topic" value="$(arg lio_topic)"/>
+  </node>
+  <node if="$(arg gamepad_enabled)" pkg="slicer_base" type="gamepad_node.py" name="slicer_gamepad" output="screen">
+    <param name="config" value="$(find slicer_base)/config/gamepad.yaml"/>
+    <param name="device" value="$(arg gamepad_device)"/>
+  </node>
+  <group if="$(eval arg('hardware_enabled') or arg('driver_mock'))">
+    <node pkg="slicer_base" type="driver_node.py" name="slicer_base_driver" output="screen">
+      <param name="mock" value="$(arg driver_mock)"/>
+      <param name="hardware_config" value="$(arg hardware_config)"/>
+      <param name="hardware_root" value="$(arg hardware_root)"/>
+    </node>
+  </group>
+</launch>

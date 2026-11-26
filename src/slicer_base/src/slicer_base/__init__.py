@@ -1,0 +1,1 @@
+"""Resident Slicer base control."""

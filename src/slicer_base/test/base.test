@@ -1,0 +1,20 @@
+<launch>
+  <rosparam ns="/ugv/motion">
+    max_linear_mps: 0.8
+    max_angular_rps: 0.7853981633974483
+    linear_acceleration_mps2: 0.4
+    angular_acceleration_rps2: 1.0
+    linear_braking_mps2: 0.2
+    footprint: [[-0.145, -0.14], [0.2, -0.14], [0.2, 0.14], [-0.145, 0.14]]
+    stop_linear_mps: 0.02
+    stop_angular_rps: 0.05
+    stop_window_s: 1.0
+    stop_freshness_s: 0.5
+  </rosparam>
+  <include file="$(find slicer_base)/launch/base.launch">
+    <arg name="hardware_enabled" value="false"/>
+    <arg name="driver_mock" value="true"/>
+    <arg name="gamepad_enabled" value="false"/>
+  </include>
+  <test pkg="slicer_base" type="base_smoke.py" test-name="installed_base_ownership" time-limit="20"/>
+</launch>

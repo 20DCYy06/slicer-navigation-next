@@ -1,0 +1,28 @@
+# V1.9 field driver profile from ugv_bringup/config/slicer_driver_body_speed.yaml.
+# Body control owns wheel conversion on the MCU. ROS geometry is for wheel odometry.
+control_mode: body_speed
+serial_port: /dev/c30d
+usb_vid: 6790
+usb_pid: 21972
+serial_number: '5CF0016377'
+baud: 115200
+counts_per_revolution: 60000
+max_wheel_mm_s: 600
+pwm_signs: [-1, 1, 1, 1]
+encoder_signs: [-1, 1, -1, 1]
+wheel_ports:
+  left_front: C
+  right_front: D
+  left_rear: A
+  right_rear: B
+wheel_diameter: 0.065
+track_width: 0.179
+wheelbase: 0.13
+publish_hz: 20.0
+command_timeout_s: 0.25
+telemetry_timeout_s: 0.5
+wheel_feedback_timeout_s: 0.3
+body_feedback_timeout_s: 0.3
+body_imu_timeout_ms: 100
+motor_output_limit_percent: 91
+mcu_pwm_accept_max_permille: 982
