@@ -95,6 +95,9 @@ class NavigationServer:
         self.footprint = rospy.get_param("/ugv/motion/footprint")
         self.stop_timeout = rospy.get_param("/ugv/motion/stop_timeout_s")
         self.stop_freshness = rospy.get_param("/ugv/motion/stop_freshness_s")
+        self.verified_stop_reserve_m = (
+            rospy.get_param("/ugv/motion/stop_linear_mps") * rospy.get_param("/ugv/motion/stop_window_s")
+        )
         self.default_timeout = rospy.get_param("~default_timeout_s", 120.0)
         self.startup_timeout = rospy.get_param("~startup_timeout_s", 3.0)
         self.preparation_timeout = rospy.get_param("~preparation_timeout_s", 60.0)
@@ -435,7 +438,7 @@ class NavigationServer:
         if task.config is None:
             if self.last_config is not None and not self.last_config.done:
                 return
-            xy, yaw = self.tolerances(task)
+            xy, yaw = self.planner_tolerances(task)
             task.config = self.last_config = self.services.submit(self.move_base.configure, xy, yaw, task.preparation)
         if not task.config.done:
             return
@@ -464,6 +467,13 @@ class NavigationServer:
             return .20, math.pi + .001
         xy = task.goal.xy_tolerance_m or .20
         yaw = (task.goal.yaw_tolerance_rad or .30) if task.goal.has_yaw else math.pi + .001
+        return xy, yaw
+
+    def planner_tolerances(self, task):
+        xy, yaw = self.tolerances(task)
+        if not task.preparation and task.goal.mode == Goal.WGS84 and task.goal.require_geographic_verification:
+            # Leave room for motion at the stop threshold during the measurement window.
+            xy -= min(self.verified_stop_reserve_m, xy * .5)
         return xy, yaw
 
     def release(self, task):
