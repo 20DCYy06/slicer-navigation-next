@@ -71,3 +71,5 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 用户对直行的独立观察为行驶目测无明显异常、自动停稳，未用尺量。定位残差不能替代实际地面距离测量。
 - 第二个监督运行复用 41a5150 和同一低速配置，原目标运动中被新目标替换。录包含两个独立 GoalID，旧目标结果 `REPLACED`，迟到旧取消后新目标仍取得实测前进；定向取消新目标返回 `CANCELED`，停车有效。按录包接收时间，最后取消到零输出约 0.018 s，到停稳结果约 1.323 s。随后进入 Hold，vx/wz 都为零。证据目录 `field-data/verification/field-handoff-41a5150-pAk7FH`。
 - `f85717a` 候选另行安装了等待 Release 状态的已验证 UI。现场用过的 41a5150 仍保留，用于对照实车运行。
+
+- 室内被动 GNSS 检查收到 GGA/GSA/RMC/GSV，全部有效性状态为无 Fix。随后使用现车 NTRIP 配置、仅启动 GNSS 的 45 s 读数中，1,017 个质量快照的 GGA 质量均为 0，差分客户端处于 `waiting_gga`，没有同历元 GST。这两次未提供可开始 WGS84 准备动作的证据。记录 `field-data/verification/field-gnss-passive-rSNwj5`、`field-data/verification/gnss-configured-site-A5sChk`。
