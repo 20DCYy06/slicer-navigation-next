@@ -162,3 +162,10 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 仅启动底盘观测与 RTK。用户在 Motor OFF 下平地手推，左前轮 C 的轮胎标记完成五整圈。两端各取 5 个同历元 Fixed/GST，散布 0.008/0.016 m。RTK 天线净位移 1.0784 m，C 原始计数增加 612069，即约 122414 计数/轮圈。ABCD 增量为 397031/630676/612069/636723。录包 2237 条 MCU 反馈与 2235 条底盘输出样本的峰值 PWM 和速度输出均为零。证据 `field-data/verification/field-encoder-handroll-6b6264c-cpKWI4/measurement-summary.txt`。
 - 左后轮 A 的差异集中在约 12.5 s 的计数近停。该段 A 仅增加 152，而 B/C/D 增加约 21.2–22.7 万，RTK 前进约 0.384 m。恢复后近直线段 A/C 增量分别为 385093/385252。此前三次有动力直行中 A 与其余轮的中位计数比为 0.961–1.041，手推异常不能用一个静态 A 比例解释。证据同一手推录包与 `preceding-powered-wheel-comparison.txt`。本轮先单独标记 A 测实际转数，四轮统一校正等待该对照。
 - 单独标记 A 的第二次 Motor OFF 手推中，用户观察 A 连续转满五圈，四轮原始计数增量为 607322/624720/610321/624715。A 为约 121464 计数/轮圈，RTK 净位移 1.0805 m。此前 A 的持续计数近停现象本轮未复现，来源仍未定。1898 条 MCU 反馈和 1897 条底盘输出的峰值 PWM 与速度输出为零。两个会话结束后撤销临时 GST，释放 C30D 和 GNSS 串口。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/measurement-summary.txt`。
+
+### 主机轮速里程计校准候选
+
+- 候选 `aea79e8` 将两个标记轮的约 121–122k 计数/圈和既有直行录包用于确认导航里程计的倍数差。采用 120000 作为主机侧名义计数，仅传给 `chassis_core.Odometry`。C30D 的 60000 CPR 握手、下发速度、原始反馈和停车判据使用原硬件配置。旧配置省略主机字段时仍沿用原换算。两级 EKF 只从轮速里程计融合 `vx`，轮速里程计自身的角度估计未进入定位航向。
+- 回放实际原始计数，左后轮手推段的 RTK 净位移为 1.0805 m，旧/新主机里程计分别为 2.0841/1.0477 m。首次挡板运行的近直线准备窗口为 0.9133 m，旧/新分别为 1.8222/0.9141 m。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/odometry-scale-replay.txt`。
+- 封存 install 的局部 EKF 双路回放在共有 11.37 s 窗口内，LIO 净位移 1.0599 m，旧车轮输入的滤波前向速度积分为 2.0211 m，校准后为 1.0445 m。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/ekf-replay/result.txt`。该候选待监督的短直行检验，A 先前短时计数异常仍单独保留现场记录。
+- 独立构建封存的 `aea79e8` 通过 40 项单测及带模拟 GNSS 融合的 WGS84 准备取消、导航、停稳与复核闭环，合成终点 x=2.501 m。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/wheel-scale-wgs-mock.txt`。正式回退发布指向 v1.9。
