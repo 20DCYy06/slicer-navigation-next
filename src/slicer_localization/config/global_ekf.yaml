@@ -1,0 +1,31 @@
+frequency: 30
+sensor_timeout: 0.5
+two_d_mode: true
+publish_tf: true
+predict_to_current_time: true
+transform_time_offset: 0.05
+map_frame: map
+odom_frame: odom
+base_link_frame: base_link
+world_frame: map
+print_diagnostics: true
+# The LIO projector establishes identical axes and origin for odom and map
+# from the initial chassis pose. This map-frame observation is never derived
+# from the published map -> odom transform.
+odom0: /lio/map_reference
+odom0_config: [false, false, false, false, false, true, false, false, false, false, false, false, false, false, false]
+odom0_differential: false
+odom0_queue_size: 5
+odom1: /ugv/internal/wheel_odom
+odom1_config: [false, false, false, false, false, false, true, false, false, false, false, false, false, false, false]
+odom1_queue_size: 10
+# Propagate source pose covariance into physical velocity covariance in the
+# projector. The installed differential-pose filter scales covariance by dt.
+twist0: /lio/body_motion
+twist0_config: [false, false, false, false, false, false, true, true, false, false, false, false, false, false, false]
+twist0_queue_size: 5
+pose0: /ugv/localization/gnss_xy
+pose0_config: [true, true, false, false, false, false, false, false, false, false, false, false, false, false, false]
+pose0_differential: false
+pose0_queue_size: 10
+pose0_rejection_threshold: 5.0

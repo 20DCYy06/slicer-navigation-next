@@ -118,5 +118,3 @@ def swept_clear(pose, v, w, footprint, grid, horizon, threshold=100, unknown=Tru
         if not footprint_clear(p, footprint, grid, threshold, unknown):
             return False
     return True
-
-

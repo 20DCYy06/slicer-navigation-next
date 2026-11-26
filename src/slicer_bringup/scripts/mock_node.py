@@ -26,13 +26,14 @@ def validate(goal):
         if pose.header.frame_id != "map":
             return "仅支持 map 坐标系"
         age = (rospy.Time.now() - pose.header.stamp).to_sec()
-        if not pose.header.stamp.is_zero() and not 0 <= age <= 0.5:
+        if not pose.header.stamp.is_zero() and not 0 <= age <= 5.0:
             return "本地目标时间戳已过期"
-        if not all(map(math.isfinite, (pose.pose.position.x, pose.pose.position.y))):
+        if not all(map(math.isfinite, (pose.pose.position.x, pose.pose.position.y))) or pose.pose.position.z != 0:
             return "本地坐标无效"
         if goal.has_yaw:
             q = pose.pose.orientation
-            if not math.isclose(sum(v*v for v in (q.x, q.y, q.z, q.w)), 1.0, abs_tol=1e-3):
+            if (not math.isclose(sum(v*v for v in (q.x, q.y, q.z, q.w)), 1.0, abs_tol=1e-3)
+                    or abs(q.x) > 1e-3 or abs(q.y) > 1e-3):
                 return "姿态四元数无效"
         if goal.require_geographic_verification:
             return "本地目标不能要求地理复核"
@@ -46,7 +47,7 @@ def validate(goal):
     else:
         return "目标类型无效"
     limits = (goal.xy_tolerance_m, goal.yaw_tolerance_rad, goal.timeout.to_sec())
-    if any(not math.isfinite(value) or value < 0 for value in limits):
+    if any(not math.isfinite(value) or value < 0 for value in limits) or goal.yaw_tolerance_rad > math.pi:
         return "容差或期限无效"
     return ""
 
@@ -57,6 +58,7 @@ class Mock:
         self.lock = Lock()
         self.active = None
         self.started = rospy.Time()
+        self.last_fix = rospy.Time()
         self.last_result = None
         self.hold = False
         self.estop = False
@@ -186,7 +188,7 @@ class Mock:
                 phase = Feedback.PLANNING
             elif goal.require_geographic_verification and age > 2.5:
                 phase = Feedback.VERIFYING
-            timeout = goal.timeout.to_sec() or 60.0
+            timeout = goal.timeout.to_sec() or 120.0
             ending = None
             if age >= timeout:
                 ending = (Result.TIMEOUT, "Mock 任务超时", "set_aborted")
@@ -250,10 +252,12 @@ class Mock:
             status.active_velocity_source = "navigation"
         if not (self.scenario == "gnss_loss" and
                 not self.started.is_zero() and (now - self.started).to_sec() >= 0.8):
-            status.gnss_fix_type = UgvStatus.GNSS_FIXED
             status.gnss_valid = True
-            status.gnss_stamp = now
-            status.gnss_received_stamp = now
+            self.last_fix = now
+        if not self.last_fix.is_zero():
+            status.gnss_fix_type = UgvStatus.GNSS_FIXED
+            status.gnss_stamp = self.last_fix
+            status.gnss_received_stamp = self.last_fix
         if self.last_result:
             status.last_goal_id, status.last_result_code, status.last_result_stamp = self.last_result
             status.last_result_valid = True

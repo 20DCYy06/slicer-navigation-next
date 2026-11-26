@@ -7,14 +7,14 @@ ROS1 Noetic。BT 只需要 `slicer_interfaces` 生成的消息与下表公开入
 | `/ugv/navigate` | `slicer_interfaces/NavigateToPointAction` | 每次执行一个目标。首个 WGS84 目标可进入配准准备。 |
 | `/ugv/status` | `slicer_interfaces/UgvStatus` | 约 10 Hz。每条观测使用其原始时间和有效性，终态与当前任务分别保存。 |
 | `/ugv/control/hold`、`/ugv/control/release` | `slicer_interfaces/Control` | 空请求，返回 `accepted`、`reason`。Hold 抑制自主及任务运动。Release 解除 hold，原任务需重发，急停独立处理。 |
-| `/ugv/cmd_vel/mission` | `geometry_msgs/TwistStamped` | 同机 ROS 时钟。位置系 `base_link`，`linear.x` m/s、`angular.z` rad/s。动作前持续发送时戳递增的新指令。 |
+| `/ugv/cmd_vel/mission` | `geometry_msgs/TwistStamped` | 同机 ROS 时钟。位置系 `base_link`，`linear.x` m/s、`angular.z` rad/s。持续发送时戳递增的新指令，0.25 秒过期。可用任务源接管时撤销旧导航权限。 |
 | `/ugv/actuators/servo` | `slicer_interfaces/Servo` | V1.9 通道 1，脉宽 500–2500 μs。应答只确认协议回执。 |
 
 ## 目标和状态
 
-- `LOCAL_POSE=1` 使用 `local_target`，只接受 `map`，位置单位 m。时间戳填零表示使用固定会话参考系中的指定点，也可填当前 ROS 时间。指定 `has_yaw` 时从四元数读航向。
+- `LOCAL_POSE=1` 使用 `local_target`，只接受 `map`，位置单位 m。时间戳填零表示使用固定会话参考系中的指定点，也可填近 5 秒内的 ROS 时间。指定 `has_yaw` 时从四元数读航向。
 - `WGS84=2` 使用十进制度经纬度。椭球高单位 m，省略时采用会话参考平面。可选 `yaw_enu_rad` 为正东零、逆时针正。在 `has_yaw=false` 时不强加绝对终点航向。地理目标表示车体 `base_link` 原点的地面停车位置。
-- `xy_tolerance_m`、`yaw_tolerance_rad`、`timeout` 填零使用服务端默认值。WGS84 设 `require_geographic_verification` 后要求独立的本次 GNSS 到点复核。
+- `xy_tolerance_m`、`yaw_tolerance_rad`、`timeout` 填零使用服务端默认值（0.20 m、0.30 rad、120 s）。WGS84 设 `require_geographic_verification` 后要求独立的本次 GNSS 到点复核。
 - Feedback 带 GoalID 与 `PREPARING`、`PLANNING`、`NAVIGATING`、`VERIFYING`、`STOPPING`。剩余距离、速度、投影目标各有有效位。投影携带 `transform_version`。
 - 合法新目标可直接替换当前目标。无效目标只拒绝自身。取消用各自的 GoalHandle。接受新目标后，旧取消与旧结果不会撤销新目标。普通客户端断连没有可靠取消语义。
 - 成功包含停稳确认。处理取消时先抑制该目标输出，再在有界时间内确认停车。替换与人工接管释放旧目标输出权，后续来源可接手。结果中的 `stop_commanded`、`stop_valid` 和 `stopped` 分别表示已抑制目标输出、停车观测是否有效及车体是否停稳。误差仅在对应有效位为真时使用，来源见 `error_source`。

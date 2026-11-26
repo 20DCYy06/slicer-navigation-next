@@ -1,17 +1,27 @@
 <launch>
   <arg name="hardware_enabled" default="false"/>
   <arg name="driver_mock" default="false"/>
+  <arg name="gamepad_enabled" default="$(arg hardware_enabled)"/>
+  <arg name="gamepad_device" default="/dev/input/js0"/>
   <arg name="hardware_config" default="$(find slicer_base)/config/c30d_v19.yaml"/>
   <arg name="motion_config" default="$(find slicer_bringup)/config/motion.yaml"/>
   <arg name="start_lio" default="$(arg hardware_enabled)"/>
   <arg name="start_perception" default="$(arg start_lio)"/>
   <arg name="livox_config" default="$(find slicer_localization)/config/MID360.json"/>
   <arg name="enable_geographic" default="false"/>
+  <arg name="enable_gnss_fusion" default="false"/>
+  <arg name="enable_gnss_receiver" default="false"/>
+  <arg name="gnss_config" default="$(find slicer_gnss)/config/gnss.yaml"/>
+  <arg name="gnss_serial_device" default="/dev/gnss"/>
+  <arg name="ntrip" default="false"/>
+  <arg name="ntrip_credentials_file" default="/run/secrets/slicer_ntrip.json"/>
   <rosparam command="load" ns="/ugv/motion" file="$(arg motion_config)"/>
 
   <include file="$(find slicer_base)/launch/base.launch">
     <arg name="hardware_enabled" value="$(arg hardware_enabled)"/>
     <arg name="driver_mock" value="$(arg driver_mock)"/>
+    <arg name="gamepad_enabled" value="$(arg gamepad_enabled)"/>
+    <arg name="gamepad_device" value="$(arg gamepad_device)"/>
     <arg name="hardware_config" value="$(arg hardware_config)"/>
   </include>
   <include file="$(find slicer_localization)/launch/localization.launch">
@@ -19,8 +29,15 @@
     <arg name="livox_config" value="$(arg livox_config)"/>
   </include>
   <include if="$(arg start_perception)" file="$(find slicer_perception)/launch/perception.launch"/>
+  <include if="$(arg enable_gnss_receiver)" file="$(find slicer_gnss)/launch/gnss.launch">
+    <arg name="config_file" value="$(arg gnss_config)"/>
+    <arg name="serial_device" value="$(arg gnss_serial_device)"/>
+    <arg name="ntrip" value="$(arg ntrip)"/>
+    <arg name="ntrip_credentials_file" value="$(arg ntrip_credentials_file)"/>
+  </include>
   <include file="$(find slicer_navigation)/launch/navigation.launch">
     <arg name="enable_geographic" value="$(arg enable_geographic)"/>
+    <arg name="enable_gnss_fusion" value="$(arg enable_gnss_fusion)"/>
   </include>
   <node pkg="slicer_bringup" type="status_node.py" name="slicer_status" output="screen"/>
 </launch>

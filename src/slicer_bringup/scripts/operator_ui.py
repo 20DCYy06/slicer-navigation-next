@@ -247,7 +247,8 @@ class Operator:
             f"{PHASES.get(status.phase, '未知')} · {position} · 速度源 "
             f"{status.active_velocity_source or '无'}"
         )
-        if not self.active and status.last_result_valid and status.last_goal_id != self.last_displayed_result:
+        if (not self.active and status.last_result_valid and status.navigation_reason
+                and status.last_goal_id != self.last_displayed_result):
             result = RESULT_NAMES.get(status.last_result_code, status.last_result_code)
             self.details.set(f"{result} · {status.navigation_reason}")
             self.last_displayed_result = status.last_goal_id

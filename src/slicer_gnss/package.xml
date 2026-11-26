@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>slicer_gnss</name>
+  <version>0.1.0</version>
+  <description>Single-owner Slicer GNSS and NTRIP receiver.</description>
+  <maintainer email="robot@example.invalid">Slicer maintainers</maintainer>
+  <license>MIT</license>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>nmea_navsat_driver</exec_depend>
+  <exec_depend>ntrip_client</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+</package>

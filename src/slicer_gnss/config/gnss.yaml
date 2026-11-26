@@ -1,0 +1,18 @@
+# Receiver geometry belongs to localization. These are transport settings.
+source: serial
+serial_port: /dev/gnss
+expected_usb_serial: '5185028488'
+baud: 115200
+frame_id: gnss_link
+data_timeout_s: 2.5
+max_differential_age_s: 5.0
+max_source_age_s: 2.0
+future_tolerance_s: 0.5
+gst_association_wait_s: 0.15
+ntrip_enabled: false
+ntrip_host: '103.143.19.54'
+ntrip_port: 8002
+ntrip_mountpoint: RTCM33GRCEJpro
+ntrip_credentials_file: /run/secrets/slicer_ntrip.json
+rtcm_pause_file: ''
+rtcm_evidence_dir: ''

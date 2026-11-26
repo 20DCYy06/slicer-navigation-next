@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>slicer_localization</name>
+  <version>0.1.0</version>
+  <description>Fixed-map and continuous odometry localization for Slicer.</description>
+  <maintainer email="robot@example.invalid">Slicer maintainers</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>fast_lio</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>livox_ros_driver2</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>slicer_interfaces</exec_depend>
+  <exec_depend>tf</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+</package>

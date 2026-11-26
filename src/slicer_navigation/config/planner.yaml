@@ -1,0 +1,76 @@
+base_global_planner: slicer_navigation/BSplineGlobalPlanner
+base_local_planner: slicer_navigation/DWAPlannerROS
+controller_frequency: 10.0
+planner_frequency: 1.0
+controller_patience: 15.0
+planner_patience: 5.0
+oscillation_timeout: 20.0
+oscillation_distance: 0.05
+shutdown_costmaps: false
+make_plan_clear_costmap: false
+make_plan_add_unreachable_goal: false
+recovery_behavior_enabled: false
+clearing_rotation_allowed: false
+recovery_behaviors: []
+GlobalPlanner:
+  allow_unknown: true
+  use_dijkstra: true
+  use_quadratic: true
+  use_grid_path: false
+  old_navfn_behavior: true
+  default_tolerance: 0.0
+  orientation_mode: 1
+  orientation_window_size: 2
+  task_side_hysteresis: true
+  smoothing:
+    observed_prefix: true
+  continuity_cost:
+    enabled: true
+    weight: 4.0
+    decay_length_m: 2.0
+    obstacle_weight: 0.70
+    obstacle_soft_radius_m: 0.60
+    deviation_cap_m: 1.0
+    min_clearance_m: 0.23
+    rejoin_distance_m: 0.30
+DWAPlannerROS:
+  odom_topic: /odom
+  min_vel_x: 0.0
+  # At 10 Hz the shared 0.4 m/s² limit admits at most 0.04 m/s from rest.
+  # This threshold admits a DWA sample without altering the Guard or stop limits.
+  min_vel_trans: 0.035
+  min_vel_theta: 0.25
+  max_vel_y: 0.0
+  min_vel_y: 0.0
+  acc_lim_y: 0.0
+  xy_goal_tolerance: 0.20
+  yaw_goal_tolerance: 0.30
+  latch_xy_goal_tolerance: false
+  sim_time: 1.05
+  sim_granularity: 0.025
+  angular_sim_granularity: 0.025
+  path_distance_bias: 2.4
+  goal_distance_bias: 1.4
+  occdist_scale: 0.01
+  twirling_scale: 0.0
+  stop_time_buffer: 0.2
+  oscillation_reset_dist: 0.05
+  oscillation_reset_angle: 0.2
+  forward_point_distance: 0.325
+  scaling_speed: 0.25
+  max_scaling_factor: 0.2
+  vx_samples: 9
+  vy_samples: 1
+  vth_samples: 21
+  use_dwa: true
+  prune_plan: false
+  start_heading_rate: 0.45
+  start_heading_tolerance: 0.12
+  start_heading_settle: 0.25
+  start_heading_timeout: 16.0
+  start_heading_min_distance: 0.20
+  start_heading_lookahead: 1.35
+  start_heading_kp: 1.6
+  start_heading_kd: 0.25
+  goal_approach_decel: 0.75
+  goal_approach_response: 0.25

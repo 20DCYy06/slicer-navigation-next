@@ -17,6 +17,7 @@ TOPICS = (
     "/ugv/internal/geographic_status", "/ugv/internal/wheel_odom",
     "/odom", "/odometry/global", "/lio/odom", "/tf", "/tf_static",
     "/gnss/fix", "/gnss/fix_quality", "/gnss/nmea", "/ugv/localization/gnss_xy",
+    "/ugv/internal/move_base/DWAPlannerROS/command",
     "/ugv/cmd_vel/mission", "/ugv/internal/nav_velocity", "/ugv/internal/move_base/unrouted_cmd_vel",
     "/ugv/internal/body_velocity", "/ugv/internal/mcu_feedback", "/scan",
     "/ugv/internal/move_base/global_costmap/costmap",

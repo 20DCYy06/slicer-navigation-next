@@ -1,0 +1,14 @@
+frames:
+  base: base_link
+chassis:
+  body_length: 0.23
+  body_width: 0.206
+sensors:
+  self_filter_padding: 0.01
+  arm_self_filter_min_z: 0.23
+  front_fov_deg: 160.0
+navigation:
+  travel_envelope:
+    rear_x: -0.10
+    front_x: 0.17
+    half_width: 0.11

@@ -1,0 +1,51 @@
+<launch>
+  <arg name="start_lio" default="true"/>
+  <arg name="livox_config" default="$(find slicer_localization)/config/MID360.json"/>
+  <!-- FAST-LIO and the Livox driver read their acquisition parameters globally. -->
+  <group if="$(arg start_lio)">
+    <rosparam command="load" file="$(find slicer_localization)/config/lio.yaml"/>
+    <param name="point_filter_num" value="2"/>
+    <param name="max_iteration" value="3"/>
+    <param name="filter_size_surf" value="0.15"/>
+    <param name="filter_size_map" value="0.25"/>
+    <param name="cube_side_length" value="200.0"/>
+    <param name="runtime_pos_log_enable" value="false"/>
+    <param name="xfer_format" value="1"/>
+    <param name="multi_topic" value="0"/>
+    <param name="data_src" value="0"/>
+    <param name="publish_freq" value="10.0"/>
+    <param name="output_data_type" value="0"/>
+    <param name="cmdline_str" value="100000000000000" type="str"/>
+    <param name="frame_id" value="laser_link"/>
+    <param name="enable_lidar_bag" value="false"/>
+    <param name="enable_imu_bag" value="false"/>
+    <param name="user_config_path" value="$(arg livox_config)"/>
+    <node pkg="livox_ros_driver2" type="livox_ros_driver2_node" name="livox_lidar_publisher"
+          args="100000000000000" output="screen"/>
+    <node pkg="fast_lio" type="fastlio_mapping" name="laserMapping" output="screen"/>
+  </group>
+  <node pkg="slicer_localization" type="sensor_geometry.py" name="slicer_sensor_geometry"
+        output="screen" clear_params="true">
+    <rosparam command="load" file="$(find slicer_localization)/config/sensor_geometry.yaml"/>
+    <rosparam command="load" ns="fast_lio" file="$(find slicer_localization)/config/lio.yaml"/>
+  </node>
+  <node pkg="slicer_localization" type="lio_projector.py" name="slicer_lio_projector"
+        output="screen" clear_params="true">
+    <rosparam command="load" file="$(find slicer_localization)/config/sensor_geometry.yaml"/>
+    <rosparam command="load" ns="fast_lio" file="$(find slicer_localization)/config/lio.yaml"/>
+  </node>
+  <node pkg="robot_localization" type="ekf_localization_node" name="slicer_local_ekf"
+        output="screen" clear_params="true">
+    <rosparam command="load" file="$(find slicer_localization)/config/local_ekf.yaml"/>
+    <rosparam command="load" file="$(find slicer_localization)/config/ekf_velocity_response.yaml"/>
+    <remap from="odometry/filtered" to="/odom"/>
+    <remap from="set_pose" to="/ugv/internal/local_ekf/set_pose"/>
+  </node>
+  <node pkg="robot_localization" type="ekf_localization_node" name="slicer_global_ekf"
+        output="screen" clear_params="true">
+    <rosparam command="load" file="$(find slicer_localization)/config/global_ekf.yaml"/>
+    <rosparam command="load" file="$(find slicer_localization)/config/ekf_velocity_response.yaml"/>
+    <remap from="odometry/filtered" to="/odometry/global"/>
+    <remap from="set_pose" to="/ugv/internal/global_ekf/set_pose"/>
+  </node>
+</launch>

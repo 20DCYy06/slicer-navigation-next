@@ -1,0 +1,7 @@
+base_to_laser:
+  translation: [0.065, 0.0, 0.095]
+  rotation: [0.0, 0.0, 0.0, 1.0]
+laser_to_arm:
+  translation: [0.0, 0.0, 0.045]
+  rotation: [0.0, 0.0, 0.0, 1.0]
+lio_pose_variance: [0.0025, 0.0025, 0.0025]

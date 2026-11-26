@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>slicer_navigation</name>
+  <version>0.1.0</version>
+  <description>Single-goal navigation, fixed-map planning, and a goal-scoped move_base adapter.</description>
+  <maintainer email="robot@example.invalid">Slicer maintainers</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>actionlib_msgs</depend>
+  <depend>angles</depend>
+  <depend>base_local_planner</depend>
+  <depend>costmap_2d</depend>
+  <depend>dwa_local_planner</depend>
+  <depend>geometry_msgs</depend>
+  <depend>global_planner</depend>
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
+  <depend>move_base_msgs</depend>
+  <depend>nav_core</depend>
+  <depend>nav_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>roscpp</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <exec_depend>actionlib</exec_depend>
+  <exec_depend>dynamic_reconfigure</exec_depend>
+  <exec_depend>move_base</exec_depend>
+  <exec_depend>rosgraph</exec_depend>
+  <exec_depend>roslib</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>slicer_interfaces</exec_depend>
+  <exec_depend>slicer_localization</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf</exec_depend>
+  <export>
+    <nav_core plugin="${prefix}/plugins/global_planner_plugin.xml"/>
+    <nav_core plugin="${prefix}/plugins/local_planner_plugin.xml"/>
+  </export>
+</package>

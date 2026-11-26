@@ -1,0 +1,14 @@
+<launch>
+  <arg name="filter_config" default="$(find slicer_perception)/config/self_filter.yaml"/>
+  <node pkg="slicer_perception" type="arm_cloud_filter.py" name="slicer_arm_cloud_filter" output="screen">
+    <param name="config_file" value="$(arg filter_config)"/>
+  </node>
+  <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="slicer_cloud_to_scan" output="screen">
+    <remap from="cloud_in" to="/cloud_nav_filtered"/>
+    <remap from="scan" to="/scan_raw"/>
+    <rosparam command="load" file="$(find slicer_perception)/config/scan.yaml"/>
+  </node>
+  <node pkg="slicer_perception" type="self_scan_filter.py" name="slicer_scan_filter" output="screen">
+    <param name="config_file" value="$(arg filter_config)"/>
+  </node>
+</launch>

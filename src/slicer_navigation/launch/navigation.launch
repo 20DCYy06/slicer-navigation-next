@@ -1,0 +1,18 @@
+<launch>
+  <arg name="start_move_base" default="true"/>
+  <arg name="enable_geographic" default="false"/>
+  <arg name="enable_gnss_fusion" default="false"/>
+  <group ns="ugv/internal">
+    <node if="$(arg start_move_base)" pkg="slicer_navigation" type="run_move_base.py"
+          name="move_base" output="screen" clear_params="true">
+      <remap from="cmd_vel" to="move_base/unrouted_cmd_vel"/>
+      <rosparam command="load" file="$(find slicer_navigation)/config/planner.yaml"/>
+      <rosparam command="load" file="$(find slicer_navigation)/config/costmaps.yaml"/>
+    </node>
+    <node pkg="slicer_navigation" type="navigate_server.py" name="slicer_navigate"
+          output="screen" clear_params="true">
+      <param name="enable_geographic_navigation" value="$(arg enable_geographic)"/>
+      <param name="enable_gnss_fusion" value="$(arg enable_gnss_fusion)"/>
+    </node>
+  </group>
+</launch>
