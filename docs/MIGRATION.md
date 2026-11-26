@@ -100,3 +100,10 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 实车会话结束后撤销 UM982 的临时 GST 输出。恢复后继续读到 GGA/GSA/GSV/RMC，四秒内 GST 为零，未将临时设置写入接收机持久配置。
 
 - TF 时序候选 `40b150c5c805889ca5cc53df1616f8d2556aec00` 已独立安装封存。新 install 从空 overlay 终端可定位接口、bringup 和 UI，33 项单测及 20 Hz/1 Hz、0.20 m/s 指令上限的 WGS84 合成闭环通过。模拟终点 x=2.472 m，记录 `field-data/verification/wgs-tf-timing-result.txt`。实车以本地直行、运动中替换/取消、WGS84 停稳配准和进入导航为已验证范围；WGS84 到点、实时 GNSS 融合、转向与绕障需监督复测。
+
+### 左后方回波消除与复测候选
+
+- 在已有录包中，室内直行和室内目标交接共 162/184 帧命中同一左后小区域。室外末段的回波在 `base_link` 下离散约 2.4 cm，转换到 `map` 下约 84 cm，期间实车移动 2.73 m。回放实车 TF 样本复现 76 次查询失败，按新候选增加 10 ms 的时序重放后均可查询。
+- 静态对照仅启动 MID360、定位与感知链。拨开线束前，注册点云里的回波中心为 `base_link` 下 `(-0.123, +0.242, +0.148) m`。用户在原车位拨开左后侧疑似线束后重复采样，原始点云命中从 77/77 帧降到 0/77，注册及过滤点云与两级扫描均从 76/78 降到 0/78。最终扫描的 0.315 m 内返回由 195 个降到 1 个，前方对照区每帧中位数为 61 和 60。前、后两次 LIO 最大位移分别为 4 和 8 mm。证据 `field-data/verification/stationary-near-field-E9f1hg` 和 `field-data/verification/stationary-harness-moved-9SZwmn/comparison.txt`。
+- 候选 `2b4c2d20d113ceabacdc31a7d38eb60abd1ed9c4` 已独立安装封存。全局规划状态区分起点与目标的硬净距、未知格和地图边界拒绝。常规录包收集规划状态，新增 8 秒雷达快照。规划硬净距、Guard 与原感知自滤范围沿用现值。合成左后近障碍可分别触发起点和目标净距拒绝，越界目标单独报告，恢复开阔扫描后同一路线再次可规划，测试未发运动目标。证据 `field-data/verification/near-field-planner-UdaqqI`。
+- 从该封存 install 执行 33 项单测、规划净距与地图边界复测，以及 20 Hz GGA、1 Hz GST、指令上限 0.20 m/s 的 WGS84 合成闭环均通过。合成终点 x=2.462 m，停稳后由 GNSS 复核。证据 `field-data/verification/near-field-planner-UdaqqI/staged-wgs.txt`。接下来在固定线束后做一次户外静态预检和受监督的 WGS84 到点复核，现场正式回退仍指向 v1.9。
