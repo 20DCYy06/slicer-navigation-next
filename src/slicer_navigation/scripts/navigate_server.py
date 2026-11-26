@@ -98,7 +98,7 @@ class NavigationServer:
         self.default_timeout = rospy.get_param("~default_timeout_s", 120.0)
         self.startup_timeout = rospy.get_param("~startup_timeout_s", 3.0)
         self.preparation_timeout = rospy.get_param("~preparation_timeout_s", 60.0)
-        self.geo = RosGeographicSession()
+        self.geo = RosGeographicSession(preparation_timeout_s=self.preparation_timeout)
         self.move_base = MoveBaseAdapter()
         self.transforms = tf2_ros.Buffer()
         self.transform_listener = tf2_ros.TransformListener(self.transforms)

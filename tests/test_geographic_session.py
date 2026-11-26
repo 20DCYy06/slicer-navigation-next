@@ -188,6 +188,15 @@ class GeographicSessionTest(unittest.TestCase):
         self.assertTrue(result.arrived)
         self.assertEqual(result.stamp_ns, stamp)
         self.assertAlmostEqual(result.error_m, 0.0, places=5)
+        # At 20 Hz, GGA usually advances again before the next 1 Hz GST.
+        fallback = stamp + 5_000_000
+        session.add_map_pose(PlanarPose(fallback, sample.x, sample.y, sample.yaw))
+        session.add_lio_pose(PlanarPose(fallback, sample.x, sample.y, sample.yaw))
+        session.observe(observation(fallback, antenna, gst_utc="010000.90"), fallback + 20)
+        result = session.verify(projected, last_stamp, fallback + 20, 0.2)
+        self.assertTrue(result.valid, result.reason)
+        self.assertEqual(result.stamp_ns, stamp)
+        self.assertFalse(session.verify(projected, stamp, fallback + 20, 0.2).valid)
         # A newer usable fix may be waiting for its future LIO bracket.
         pending = stamp + 10_000_000
         session.observe(observation(pending, antenna), pending + 20)
@@ -198,6 +207,16 @@ class GeographicSessionTest(unittest.TestCase):
         uncertain = replace(observation(broad, antenna), covariance_en=(0.25, 0.0, 0.0, 0.25))
         session.observe(uncertain, broad + 20)
         self.assertIn("uncertainty", session.verify(projected, last_stamp, broad + 20, 0.2).reason)
+        fresh = broad + 5_000_000
+        session.add_map_pose(PlanarPose(fresh, sample.x, sample.y, sample.yaw))
+        session.add_lio_pose(PlanarPose(fresh, sample.x, sample.y, sample.yaw))
+        session.observe(observation(fresh, antenna), fresh + 20)
+        self.assertTrue(session.verify(projected, last_stamp, fresh + 20, 0.2).valid)
+        late = fresh + 3 * SECOND
+        session.add_map_pose(PlanarPose(late, sample.x, sample.y, sample.yaw))
+        session.add_lio_pose(PlanarPose(late, sample.x, sample.y, sample.yaw))
+        session.observe(observation(late, antenna, gst_utc="010000.90"), late + 20)
+        self.assertFalse(session.verify(projected, last_stamp, late + 20, 0.2).valid)
         session.add_map_pose(PlanarPose(stamp - 1, 999.0, 999.0, 0.0))
         self.assertFalse(session.verify(projected, last_stamp, stamp + 20, 0.2).valid)
 
@@ -206,6 +225,32 @@ class GeographicSessionTest(unittest.TestCase):
         session.begin_preparation()
         session.cancel_preparation()
         self.assertFalse(session.commit(True, 4 * SECOND))
+
+    def test_slow_preparation_retains_the_baseline_at_receiver_rate(self):
+        session = GeographicSession(LEVER, ORIGIN)
+        session.begin_preparation(SECOND)
+        radius = 6378137.0 + ORIGIN.altitude_ellipsoid_m
+        for index in range(401):
+            stamp = SECOND + index * 50_000_000
+            x = index * 0.004375
+            pose = PlanarPose(stamp, x, 0.0, 0.0)
+            session.add_map_pose(pose)
+            session.add_lio_pose(pose)
+            point = GeoPoint(0.0, math.degrees((x + LEVER[0]) / radius), ORIGIN.altitude_ellipsoid_m)
+            session.observe(observation(stamp, point), stamp + 20)
+        self.assertTrue(session.candidate_ready(stamp + 20), session.reason)
+        self.assertGreater(len(session.pairs), 256)
+
+    def test_preparation_history_is_bounded_by_source_time(self):
+        session = GeographicSession(LEVER, ORIGIN, preparation_timeout_ns=SECOND)
+        session.begin_preparation(SECOND)
+        stamps = [SECOND, SECOND + 500_000_000, 2 * SECOND + 200_000_000]
+        for stamp in stamps:
+            pose = PlanarPose(stamp, 0.0, 0.0, 0.0)
+            session.add_map_pose(pose)
+            session.add_lio_pose(pose)
+            session.observe(observation(stamp), stamp + 20)
+        self.assertEqual([pair.map_pose.stamp_ns for pair in session.pairs], stamps[1:])
 
 
 if __name__ == "__main__":

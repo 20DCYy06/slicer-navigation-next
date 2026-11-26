@@ -33,7 +33,7 @@ def _pose(message):
 
 
 class RosGeographicSession:
-    def __init__(self):
+    def __init__(self, preparation_timeout_s=60.0):
         self._lock = RLock()
         self.operational = bool(rospy.get_param("~enable_geographic_navigation", False))
         self._fusion_enabled = self.operational and bool(rospy.get_param("~enable_gnss_fusion", False))
@@ -51,6 +51,7 @@ class RosGeographicSession:
             max_fix_age_ns=fix_age_ns, max_pose_gap_ns=int(config.get("max_pose_gap_s", 0.5) * 1e9),
             max_innovation_m=config.get("max_innovation_m", 3.0),
             max_site_radius_m=config.get("max_site_radius_m", 1000.0),
+            preparation_timeout_ns=int(preparation_timeout_s * 1e9),
             limits=AlignmentLimits(**config.get("alignment", {})),
         )
         self._last_tick_ns = 0

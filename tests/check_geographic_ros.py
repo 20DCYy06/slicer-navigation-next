@@ -28,7 +28,8 @@ class GeographicPlant(Plant):
         self.fix = rospy.Publisher("/gnss/fix", NavSatFix, queue_size=2)
         self.quality = rospy.Publisher("/gnss/fix_quality", DiagnosticArray, queue_size=2)
         self.source_stamps = deque(maxlen=512)
-        self.fix_timer = rospy.Timer(rospy.Duration(0.075), self.publish_fix)
+        self.fix_count = 0
+        self.fix_timer = rospy.Timer(rospy.Duration(0.05), self.publish_fix)
 
     def publish_fix(self, _event):
         stamp = rospy.Time.now()
@@ -40,10 +41,12 @@ class GeographicPlant(Plant):
                             status=NavSatStatus(status=NavSatStatus.STATUS_GBAS_FIX))
         message.header.stamp, message.header.frame_id = stamp, "gnss_link"
         epoch = f"010000.{stamp.nsecs:09d}"
+        self.fix_count += 1
         values = {"session": "isolated-synthetic", "gga_quality": "4", "fix_valid": "true",
-                  "fresh_rtk_usable": "true", "gga_utc_time": epoch,
-                  "receiver_gst_utc_time": epoch, "receiver_gst_gga_match": "true",
-                  "receiver_gst_lat_std_m": "0.03", "receiver_gst_lon_std_m": "0.03"}
+                  "fresh_rtk_usable": "true", "gga_utc_time": epoch, "receiver_gst_gga_match": "false"}
+        if self.fix_count % 20 == 0:
+            values.update(receiver_gst_utc_time=epoch, receiver_gst_gga_match="true",
+                          receiver_gst_lat_std_m="0.03", receiver_gst_lon_std_m="0.03")
         diagnostic = DiagnosticStatus(name="cup_gnss/receiver",
                                       values=[KeyValue(key, value) for key, value in values.items()])
         quality = DiagnosticArray(status=[diagnostic])

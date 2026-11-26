@@ -45,22 +45,26 @@ class MapObservation:
 class GeographicSession:
     def __init__(self, antenna_offset, origin=None, *, max_fix_age_ns=2_500_000_000,
                  max_pose_gap_ns=500_000_000, max_innovation_m=3.0,
-                 max_site_radius_m=1000.0, limits=AlignmentLimits()):
+                 max_site_radius_m=1000.0, preparation_timeout_ns=60_000_000_000,
+                 limits=AlignmentLimits()):
         if len(antenna_offset) != 2 or not all(finite(value) for value in antenna_offset):
             raise ValueError("horizontal antenna installation must contain finite x and y")
         if not all(finite(value) and value > 0 for value in
                    (max_fix_age_ns, max_pose_gap_ns, max_innovation_m, max_site_radius_m)):
             raise ValueError("invalid geographic session bounds")
+        if type(preparation_timeout_ns) is not int or preparation_timeout_ns <= 0:
+            raise ValueError("preparation timeout must be positive nanoseconds")
         self.antenna_offset = tuple(antenna_offset)
         self.frame = EnuFrame(origin) if origin else None
         self.max_fix_age_ns = max_fix_age_ns
         self.max_pose_gap_ns = max_pose_gap_ns
         self.max_innovation_m = max_innovation_m
         self.max_site_radius_m = max_site_radius_m
+        self.preparation_timeout_ns = preparation_timeout_ns
         self.limits = limits
         self.map_poses = deque(maxlen=600)
         self.lio_poses = deque(maxlen=600)
-        self.pairs = deque(maxlen=256)
+        self.pairs = deque()
         self._pending = deque(maxlen=256)
         self._fit = None
         self.transform = None
@@ -74,6 +78,7 @@ class GeographicSession:
         self._preparation_start_ns = 0
         self.latest_fix = None
         self.latest_map_observation = None
+        self.latest_measured_map_observation = None
         self.reason = "Geographic alignment required"
 
     @property
@@ -86,6 +91,7 @@ class GeographicSession:
         self._map_from_lio_yaw = None
         self.latest_fix = None
         self.latest_map_observation = None
+        self.latest_measured_map_observation = None
         self._pending.clear()
         self._last_paired_stamp = 0
         self.map_poses.clear()
@@ -156,11 +162,13 @@ class GeographicSession:
             self._last_fit_stamp = 0
             self._pending.clear()
             self.latest_map_observation = None
+            self.latest_measured_map_observation = None
             self._last_paired_stamp = 0
             self._receiver_session = observation.receiver_session
         self.latest_fix = observation
         if not observation.usable or not observation.fresh(now_ns, self.max_fix_age_ns):
             self.latest_map_observation = None
+            self.latest_measured_map_observation = None
             self._pending.clear()
             self._last_paired_stamp = 0
             self.reason = observation.reason or "GNSS fix is stale"
@@ -185,22 +193,31 @@ class GeographicSession:
             try:
                 map_pose, lio_pose = self._pose_pair(stamp)
             except ValueError:
+                self.latest_measured_map_observation = None
                 self.reason = "GNSS timestamp lacks bracketing map and LIO poses"
                 continue
             east, north, up = self.frame.project(observation.fix.point)
             if not all(finite(value) for value in (east, north, up)) or math.hypot(east, north, up) > self.max_site_radius_m:
                 self.latest_map_observation = None
+                self.latest_measured_map_observation = None
                 self._last_paired_stamp = 0
                 self.reason = "GNSS observation is outside the geographic site"
                 continue
             self._last_paired_stamp = stamp
             antenna_en = east, north
             if self.preparing and stamp >= self._preparation_start_ns:
+                # The available displacement depends on elapsed motion, not on
+                # how many fixes the receiver produces while the rover moves.
+                cutoff = stamp - self.preparation_timeout_ns
+                while self.pairs and self.pairs[0].map_pose.stamp_ns < cutoff:
+                    self.pairs.popleft()
                 self.pairs.append(AlignmentPair(map_pose, antenna_en))
             if self.transform is None or stamp <= self._committed_stamp:
                 continue
             corrected = self._map_observation(observation, antenna_en, map_pose, lio_pose)
             self.latest_map_observation = corrected
+            if corrected.covariance_measured:
+                self.latest_measured_map_observation = corrected
             if corrected.innovation_m > self.max_innovation_m:
                 self.reason = "GNSS innovation exceeds the allowed map correction"
             else:
@@ -279,12 +296,15 @@ class GeographicSession:
             raise ValueError("geographic arrival tolerance must be positive")
         if self.transform is None or goal.transform_version != self.version:
             return ArrivalCheck(reason="Geographic transform changed or became unavailable")
-        measured = self.latest_map_observation
-        if not self.fix_fresh(now_ns) or measured is None:
+        latest = self.latest_map_observation
+        if not self.fix_fresh(now_ns) or latest is None:
             return ArrivalCheck(reason="No fresh, aligned RTK position for geographic verification")
-        if measured.stamp_ns <= after_stamp_ns or not 0 <= now_ns - measured.stamp_ns <= self.max_fix_age_ns:
+        if latest.stamp_ns <= after_stamp_ns or not 0 <= now_ns - latest.stamp_ns <= self.max_fix_age_ns:
             return ArrivalCheck(reason="Waiting for a new synchronized RTK fix after stopping")
-        if not measured.covariance_measured:
+        # Receiver uncertainty may arrive at a lower rate than position.
+        measured = self.latest_measured_map_observation
+        if (measured is None or measured.stamp_ns <= after_stamp_ns
+                or not 0 <= now_ns - measured.stamp_ns <= self.max_fix_age_ns):
             return ArrivalCheck(reason="Receiver uncertainty unavailable for geographic verification")
         xx, xy, _, yy = measured.covariance
         largest_variance = 0.5 * (xx + yy + math.hypot(xx - yy, 2.0 * xy))
