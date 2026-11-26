@@ -24,12 +24,18 @@ TOPICS = (
     "/ugv/internal/move_base/local_costmap/costmap",
     "/ugv/internal/move_base/plan", "/map",
 )
+PERCEPTION_TOPICS = (
+    "/livox/lidar", "/cloud_registered_body", "/cloud_nav_filtered", "/scan_raw",
+    "/scan", "/lio/odom", "/tf_static",
+)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", default=os.environ.get("SLICER_RUN_DIR", "field-data"))
     parser.add_argument("--manifest", default=os.environ.get("SLICER_RELEASE_MANIFEST"))
+    parser.add_argument("--perception-snapshot", action="store_true",
+                        help="record eight seconds of perception and lidar odometry")
     args = parser.parse_args()
     started = datetime.now(timezone.utc)
     run = Path(args.output).expanduser().resolve() / started.strftime("%Y%m%dT%H%M%S.%fZ")
@@ -46,13 +52,20 @@ def main():
         identity["motion_sha256"] = hashlib.sha256(config.stdout).hexdigest()
     identity["record_started_utc"] = started.isoformat()
     (run / "run.json").write_text(json.dumps(identity, indent=2) + "\n")
-    topics = list(TOPICS)
-    discovered = subprocess.run(["rostopic", "list"], capture_output=True, text=True, timeout=5)
-    topics.extend(topic for topic in discovered.stdout.splitlines()
-                  if topic.startswith("/ugv/internal/move_base/") and topic.endswith("/plan"))
+    if args.perception_snapshot:
+        bag = "perception.bag"
+        flags = ["--duration=8"]
+        topics = PERCEPTION_TOPICS
+    else:
+        bag = "navigation.bag"
+        flags = []
+        topics = list(TOPICS)
+        discovered = subprocess.run(["rostopic", "list"], capture_output=True, text=True, timeout=5)
+        topics.extend(topic for topic in discovered.stdout.splitlines()
+                      if topic.startswith("/ugv/internal/move_base/")
+                      and topic.endswith(("/plan", "/smoothing_status")))
     print(run, flush=True)
-    os.execvp("rosbag", ["rosbag", "record", "-O", str(run / "navigation.bag"),
-                         *dict.fromkeys(topics)])
+    os.execvp("rosbag", ["rosbag", "record", "-O", str(run / bag), *flags, *dict.fromkeys(topics)])
 
 
 if __name__ == "__main__":

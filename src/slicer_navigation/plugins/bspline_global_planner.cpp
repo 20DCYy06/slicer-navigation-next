@@ -94,11 +94,17 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     std::vector<std::uint8_t> hard;
     const auto epoch = reference_epoch_.load();
     const auto frame = costmap_ros_->getGlobalFrameID();
-    const auto feasible = [&](const Point2& p, bool provisional) {
+    const auto cell_rejection = [&](const Point2& p, bool provisional) -> const char* {
       unsigned int x, y;
-      return std::isfinite(p.x) && std::isfinite(p.y) && grid.worldToMap(p.x, p.y, x, y)
-          && !hard[y * grid.getSizeInCellsX() + x]
-          && (provisional || grid.getCost(x, y) != costmap_2d::NO_INFORMATION);
+      if (!std::isfinite(p.x) || !std::isfinite(p.y)) return "position is not finite";
+      if (!grid.worldToMap(p.x, p.y, x, y)) return "outside costmap";
+      if (hard[y * grid.getSizeInCellsX() + x]) return "violates hard clearance";
+      if (!provisional && grid.getCost(x, y) == costmap_2d::NO_INFORMATION)
+        return "is in unknown space";
+      return nullptr;
+    };
+    const auto feasible = [&](const Point2& p, bool provisional) {
+      return cell_rejection(p, provisional) == nullptr;
     };
     std::vector<Point2> retained_suffix;
     if (cost_field_enabled_) {
@@ -111,9 +117,12 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
                              + grid.getResolution() * std::sqrt(.5);
       hard = hardContinuityMask(grid.getCharMap(), grid.getSizeInCellsX(), grid.getSizeInCellsY(),
                                 grid.getResolution(), clearance);
-      if (start.header.frame_id != frame || goal.header.frame_id != frame ||
-          !feasible(point(start), allow_unknown_) || !feasible(point(goal), allow_unknown_))
-        return reject(goal, "blocked or out-of-bounds start/goal");
+      if (start.header.frame_id != frame) return reject(goal, "start frame differs from costmap");
+      if (goal.header.frame_id != frame) return reject(goal, "goal frame differs from costmap");
+      if (const auto* reason = cell_rejection(point(start), allow_unknown_))
+        return reject(goal, std::string("start ") + reason);
+      if (const auto* reason = cell_rejection(point(goal), allow_unknown_))
+        return reject(goal, std::string("goal ") + reason);
       std::vector<Point2> reference;
       if (epoch == previous_epoch_ && sameGoal(goal)) {
         retained_suffix = remainingRoute(previous_path_, point(start), cost_options_.rejoin_distance_m);

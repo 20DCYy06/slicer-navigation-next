@@ -58,7 +58,22 @@ roslaunch slicer_bringup ugv.launch
 
 UI 普通关闭会尝试取消其目标。先使用取消并观察反馈，再结束现场会话。录包也可通过
 `rosrun slicer_bringup record_run.py --output <目录> --manifest <候选的 release.json>` 运行，
-Ctrl+C 收尾。录包持续到停车观测完成后，记录现场工况和独立位置测量。
+Ctrl+C 收尾。录包持续到停车观测完成后，记录现场工况和独立位置测量。录包包含全局规划
+状态 `GlobalPlanner/smoothing_status`，可核对起点、目标净距及地图边界拒绝。
+
+## Motor OFF 下的雷达快照
+
+先按候选部署步骤设置环境，并使用独立 ROS Master。在 Motor OFF 和车身静止时启动感知链。
+
+```bash
+roslaunch slicer_bringup ugv.launch hardware_enabled:=false driver_mock:=false \
+  gamepad_enabled:=false start_lio:=true start_perception:=true enable_gnss_receiver:=false
+```
+
+雷达和投影输出稳定后，从同一 ROS Master 的终端运行
+`rosrun slicer_bringup record_run.py --perception-snapshot`。它自动收尾并保存约 8 秒的
+MID360 点、注册和过滤点云、两级扫描、激光里程计和静态 TF。比较疑似反射件时，固定车位和
+朝向，按变更前后各录一次，记录唯一改变的部件或物体。
 
 ## 回退
 
