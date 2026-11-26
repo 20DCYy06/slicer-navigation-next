@@ -6,7 +6,9 @@ publish_tf: true
 # Using a newer prediction and the latest older local sample causes yaw
 # jitter that is amplified farther from the session origin.
 transform_timeout: 0.08
-transform_time_offset: 0.05
+# The field DWA requests the latest odom pose, up to 5.9 ms ahead of map TF.
+# This lead applies to TF only. The filtered odometry retains its source time.
+transform_time_offset: 0.06
 map_frame: map
 odom_frame: odom
 base_link_frame: base_link

@@ -91,3 +91,10 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 新候选按任务原有准备时限保留数据，并用仍新鲜的最近一次配对实测协方差做停稳后复核。20 Hz GGA 中间的无 GST 帧仍按降级处理，不能覆盖已关联的 1 Hz 精度观测。时间戳、失效、同会话和误差门限继续有效。新增 20 Hz 慢速轨迹、按时限剪裁、混合精度与过期停稳复核回归。
 
 - 修复候选 `2bcf420` 已独立安装并封存。33 项单测通过；从该候选 install 以 0.20 m/s 指令上限、20 Hz GGA 和 1 Hz GST 执行合成闭环，准备取消、再次配准、投影、地理任务与停稳复核均通过，模拟终点 x=2.474 m。软件记录 `field-data/verification/wgs-real-cadence-result.txt`；用该候选安装重新执行真实录包分析的证据为 `field-data/verification/field-wgs84-645a1dd-bnp6mz/alignment-exact-2bcf420.json`。实车等待复测，保留本地直行和交接通过的独立记录。
+
+### 候选 2bcf420 的室外复测
+
+- 重新监督运行一个 WGS84 目标，启动预检到标记距离 3.169 m。约 14.70 s 达到配准门限，停稳后提交版本 1，刷新 costmap 后正常投影并进入导航。LIO/轮速固定 map 继续使用同一控制链；这次室外运行关闭实时 GNSS 融合。52 s 试验总期限耗尽，结果 `TIMEOUT`，map 残差 0.542 m，停止已确认并进入 Hold。未进入停稳地理复核。速度指令峰值 0.200 m/s，反馈峰值 0.226 m/s。录包中 1,069 个质量样本均为 Fixed，其中 54 个匹配 GST；录包和摘要在 `field-data/verification/field-wgs84-2bcf420-OVnG6l`。
+- 末段停滞由两项直接证据解释。DWA 记录 76 次 odom→map 向未来查询，最大超前 5.892 ms。全局规划另有 15 次拒绝；起点附近左后方车体相对位置重复出现近距点，致命栅格距车心约 0.20–0.283 m，小于 0.315 m 规划硬净距，目标栅格本身空闲。实际近距点来源未确定。Guard 的 3 次拦截发生在准备阶段。
+- 针对已量化的 TF 请求，下一候选把全局 EKF 的 TF 发布偏移从 50 ms 改成 60 ms。按录包日志时序计算，额外 10 ms 覆盖了全部 76 次查询差值。定位测量时间和 TF 发布所有权保持原值。真实近距回波须先查明来源，场地需能保留现有规划净距，然后做下一次监督 WGS84。偏移配置使用 [robot_localization Noetic 文档的标准参数](https://github.com/cra-ros-pkg/robot_localization/blob/noetic-devel/doc/state_estimation_nodes.rst#transform_time_offset)。
+- 实车会话结束后撤销 UM982 的临时 GST 输出。恢复后继续读到 GGA/GSA/GSV/RMC，四秒内 GST 为零，未将临时设置写入接收机持久配置。
