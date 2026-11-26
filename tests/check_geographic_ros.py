@@ -7,7 +7,7 @@ import math
 import actionlib
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseWithCovarianceStamped
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Odometry
 import rospy
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from slicer_interfaces.msg import NavigateToPointAction, NavigateToPointGoal, NavigateToPointResult, UgvStatus
@@ -62,10 +62,12 @@ def geographic_goal(east_m):
 def check(plant):
     snapshots = []
     grids = deque(maxlen=1)
+    local_poses = deque(maxlen=1)
     fused_inputs = deque(maxlen=8)
     rospy.Subscriber("/ugv/status", UgvStatus, lambda value: snapshots.append(value), queue_size=1)
-    rospy.Subscriber("/ugv/internal/move_base/global_costmap/costmap", OccupancyGrid,
+    rospy.Subscriber("/ugv/internal/move_base/local_costmap/costmap", OccupancyGrid,
                      lambda grid: grids.append(grid), queue_size=1)
+    rospy.Subscriber("/odom", Odometry, lambda pose: local_poses.append(pose), queue_size=1)
     rospy.Subscriber("/ugv/localization/gnss_xy", PoseWithCovarianceStamped,
                      lambda pose: fused_inputs.append(pose), queue_size=5)
     action = actionlib.ActionClient("/ugv/navigate", NavigateToPointAction)
@@ -77,8 +79,12 @@ def check(plant):
     assert release().accepted, "simulated release rejected"
     wait_for(lambda: not snapshots[-1].hold)
     footprint = rospy.get_param("/ugv/motion/footprint")
-    wait_for(lambda: grids and preparation_candidate(grids[-1], snapshots[-1].pose.pose, footprint, 2.0),
-             timeout=12)
+    def preparation_observed():
+        return grids and local_poses and preparation_candidate(
+            grids[-1], local_poses[-1].pose.pose, footprint, 2.0
+        )
+
+    wait_for(preparation_observed, timeout=12)
 
     feedback = []
     canceled = action.send_goal(geographic_goal(2.65),
@@ -91,6 +97,7 @@ def check(plant):
     result = canceled.get_result()
     assert result.code == NavigateToPointResult.CANCELED and result.stop_valid and result.stopped, result
     wait_for(lambda: snapshots[-1].transform_version == 0)
+    wait_for(preparation_observed, timeout=12)
 
     feedback.clear()
     final = action.send_goal(geographic_goal(2.65),
@@ -117,6 +124,8 @@ def main():
     rospy.init_node("slicer_geographic_loop_check")
     wait_for(lambda: rospy.has_param("/slicer_lio_projector/base_to_laser")
              and rospy.has_param("/slicer_lio_projector/fast_lio/mapping"))
+    if rospy.get_param("/slicer_base_driver/mock", False) is not True:
+        raise RuntimeError("The test requires the simulated driver on an isolated ROS Master")
     plant = GeographicPlant()
     try:
         check(plant)
