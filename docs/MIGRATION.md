@@ -120,3 +120,8 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 复用原地面标记为 A，在同一直线前方另采 B。B 的五个停稳 Fixed/GST 样本散布 0.015 m，A/B 间距 0.637 m。实测起点到 A、B 分别为 2.767、3.398 m，A 到起点–B 连线的横向距离为 0.080 m。Motor OFF 下核对了完整直行走廊、起点净距及零 PWM。使用候选 `2b4c2d2`、0.20 m/s 指令上限，关闭实时 GNSS 融合。
 - A 完成准备与版本 1 配准。A 持有控制权且实际前进 0.069 m/s、距 A 的 map 估计约 1.40 m 时，发送一次 B。发送 B 后 20.5 ms，A 返回 `REPLACED`，当时实测仍在运动。录包中旧 GoalID 之后无非零导航指令，B 在 1.57 s 后取得控制权并测得实际前进。B 沿用版本 1，经过 `PLANNING`、`NAVIGATING`、`STOPPING`、`VERIFYING`，无重复配准。
 - B 在 23.52 s 返回 `SUCCESS`，停稳 RTK `gnss_xy` 误差为 0.176 m。峰值前向指令与车端反馈分别为 0.200 和 0.232 m/s。结束后 Hold、零输出与实测停稳均已确认。录包有 909 个 Fixed 样本，46 个带同历元 GST。记录在 `field-data/verification/field-wgs84-handoff-2b4c2d2-3KuWIy`。会话已结束，撤销 GST 后保留原输出，正式回退仍为 v1.9。
+
+### 50 cm 挡板的绕障软件验证
+
+- 用换点录包的起点局部栅格叠加横宽 0.50 m 的虚拟挡板。原 2 m 准备段与 B 终点仍可通行，直通 B 的足迹扫掠被挡，左右均存在通过已观测栅格的绕行。证据 `field-data/verification/field-wgs84-handoff-2b4c2d2-3KuWIy/panel-geometry-replay.txt`。
+- 从同一封存 install 运行隔离模拟，挡板位于距起点 2.77 m 处，B 位于 3.40 m。两级栅格均检测到挡板，完成直线配准和版本 1 投影，实际合成车体越过挡板纵向范围，最小横向偏移 0.755 m，无足迹接触，最终 `SUCCESS` 且 `gnss_xy` 误差 0.188 m。挡板附近规划线最大偏移 0.853 m，需把车宽与转弯包络计入现场空间。证据 `field-data/verification/field-wgs84-handoff-2b4c2d2-3KuWIy/panel-mock`。现场原 A 左侧约 1 m，实车绕障待用固定挡板与空间足够的试验线验证。
