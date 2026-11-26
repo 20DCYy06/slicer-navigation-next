@@ -1,0 +1,26 @@
+<launch>
+  <arg name="hardware_enabled" default="false"/>
+  <arg name="driver_mock" default="false"/>
+  <arg name="hardware_config" default="$(find slicer_base)/config/c30d_v19.yaml"/>
+  <arg name="motion_config" default="$(find slicer_bringup)/config/motion.yaml"/>
+  <arg name="start_lio" default="$(arg hardware_enabled)"/>
+  <arg name="start_perception" default="$(arg start_lio)"/>
+  <arg name="livox_config" default="$(find slicer_localization)/config/MID360.json"/>
+  <arg name="enable_geographic" default="false"/>
+  <rosparam command="load" ns="/ugv/motion" file="$(arg motion_config)"/>
+
+  <include file="$(find slicer_base)/launch/base.launch">
+    <arg name="hardware_enabled" value="$(arg hardware_enabled)"/>
+    <arg name="driver_mock" value="$(arg driver_mock)"/>
+    <arg name="hardware_config" value="$(arg hardware_config)"/>
+  </include>
+  <include file="$(find slicer_localization)/launch/localization.launch">
+    <arg name="start_lio" value="$(arg start_lio)"/>
+    <arg name="livox_config" value="$(arg livox_config)"/>
+  </include>
+  <include if="$(arg start_perception)" file="$(find slicer_perception)/launch/perception.launch"/>
+  <include file="$(find slicer_navigation)/launch/navigation.launch">
+    <arg name="enable_geographic" value="$(arg enable_geographic)"/>
+  </include>
+  <node pkg="slicer_bringup" type="status_node.py" name="slicer_status" output="screen"/>
+</launch>
