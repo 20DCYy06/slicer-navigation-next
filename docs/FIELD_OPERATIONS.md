@@ -41,7 +41,7 @@ roslaunch slicer_bringup ugv.launch
 1. 现场负责人确认原栈已退出，并在车旁保留可立即关闭驱动的手段。唯一执行流启动候选。
    实机参数入口为 `roslaunch slicer_bringup ugv.launch hardware_enabled:=true`。
    先维持初始 Hold，核对手柄与停稳状态、雷达、局部与全局里程计，以及 `map → odom → base_link`。
-2. 得到现场确认后开始录包，再解除 Hold，选择 1–2 m 可见空地中的 `map` 目标。
+2. 得到现场确认后开始录包，再解除 Hold，等状态显示底盘在线且 Hold 已解除，选择 1–2 m 可见空地中的 `map` 目标。
    UI 预览原始坐标后发送。观察车的方向与停止，保留停车观测和独立的地面测量。
    受控试运行可通过 `motion_config:=<绝对路径>` 选择经记录的低速配置，规划器与 Guard 共用该配置。
 3. 下一轮录包覆盖行进中替换和取消。取消后按反馈确认停车，驻车用 Hold。

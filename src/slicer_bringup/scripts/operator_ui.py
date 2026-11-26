@@ -76,6 +76,7 @@ class Operator:
         self.preview = None
         self.recorder = None
         self.last_status = rospy.Time()
+        self.motion_available = False
         self.last_displayed_result = ""
         self.record_path = ""
         rospy.Subscriber("/ugv/status", UgvStatus, lambda msg: self.events.put(("status", msg)),
@@ -146,7 +147,10 @@ class Operator:
         fresh = not self.last_status.is_zero() and 0 <= (
             rospy.Time.now() - self.last_status
         ).to_sec() <= 0.5
-        enabled = self.preview is not None and self.connected and not self.active and fresh
+        enabled = (
+            self.preview is not None and self.connected and not self.active
+            and fresh and self.motion_available
+        )
         self.send_button.state(["!disabled" if enabled else "disabled"])
         self.cancel_button.state(["!disabled" if self.active else "disabled"])
 
@@ -177,7 +181,7 @@ class Operator:
         self.update_buttons()
 
     def send(self):
-        if self.preview is None or self.active or not self.connected:
+        if self.preview is None or self.active or not self.send_button.instate(["!disabled"]):
             return
         self.active = True
         self.client.send_goal(
@@ -233,6 +237,8 @@ class Operator:
 
     def show_status(self, status):
         self.last_status = status.header.stamp
+        blocked = status.hold or status.estop or status.manual_override
+        self.motion_available = status.base_online and not blocked
         fix = FIX.get(status.gnss_fix_type, "未知") if status.gnss_valid else "无有效观测"
         stop = "已停稳" if status.stopped else "未停稳" if status.stop_valid else "停稳未知"
         if not status.stop_valid:

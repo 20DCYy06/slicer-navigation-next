@@ -12,6 +12,8 @@ ROS1 Noetic。BT 只需要 `slicer_interfaces` 生成的消息与下表公开入
 
 ## 目标和状态
 
+- 如果客户端先调用 Release，应等待新鲜的 `/ugv/status` 显示 `hold=false`、`base_online=true` 后再发目标。服务响应与状态广播异步。
+
 - `LOCAL_POSE=1` 使用 `local_target`，只接受 `map`，位置单位 m。时间戳填零表示使用固定会话参考系中的指定点，也可填近 5 秒内的 ROS 时间。指定 `has_yaw` 时从四元数读航向。
 - `WGS84=2` 使用十进制度经纬度。椭球高单位 m，省略时采用会话参考平面。可选 `yaw_enu_rad` 为正东零、逆时针正。在 `has_yaw=false` 时不强加绝对终点航向。地理目标表示车体 `base_link` 原点的地面停车位置。
 - `xy_tolerance_m`、`yaw_tolerance_rad`、`timeout` 填零使用服务端默认值（0.20 m、0.30 rad、120 s）。WGS84 设 `require_geographic_verification` 后要求独立的本次 GNSS 到点复核。
