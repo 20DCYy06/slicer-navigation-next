@@ -155,3 +155,10 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 重放副本仅清零局部软代价、保留致命格、内切格和未知格后，20/22 个快照的前向指令相同。减速开始的三个取样全部相同，低速段 17 中有 15 个相同。仅把 `/odom` 输入前向速度减半时，低速段前向指令变化的中位数为 −0.0019 m/s。软膨胀会影响个别轨迹，单独缩小它或改变速度输入不足以复现整体改善。证据 `field-data/verification/dwa-box-replay-5J2scH/summary.txt`。
 - 候选 `6b6264c` 对 0.47 m 深、0.50 m 宽的箱体完成隔离仿真。越过完整箱体的纵向范围并停稳，约 32.92 s 返回 `SUCCESS`，`gnss_xy` 误差 0.168 m。箱体后侧被观测后出现 4 次目标与 3 次起点硬净距拒绝，已有路径经 Guard 继续，车体足迹与箱体无接触。完整箱体具备复现短暂拒绝的几何条件，现场慢行的速度比例仍待单独校验。证据 `field-data/verification/dwa-box-replay-5J2scH/full-box-mock`。
 - 换电重启后确认候选、录包与回退发布可读，底盘和 RTK 串口均已枚举且空闲。
+- 在相同完整箱体、候选、ROS 参数与 75 s 期限下，只把仿真车体纵向位移乘 0.50，保留 mock 轮速报告与转动。车体仍越过箱体且无足迹接触，穿过纵向箱体范围的时间由约 2.72 s 增至 5.10 s，之后出现 17 次硬起点拒绝及 49 次 Guard 扫掠拦截，最终 `TIMEOUT`，模拟底盘反馈确认停稳，map 残差 0.244 m。该对照量化地面速度与轮速不同对闭环的影响，实际挡板录包中的慢行仍以其独立证据判断。结果 `field-data/verification/dwa-box-replay-5J2scH/full-box-half-ground-W52zMr`。
+
+### 换电后 Motor OFF 轮胎标记实测
+
+- 仅启动底盘观测与 RTK。用户在 Motor OFF 下平地手推，左前轮 C 的轮胎标记完成五整圈。两端各取 5 个同历元 Fixed/GST，散布 0.008/0.016 m。RTK 天线净位移 1.0784 m，C 原始计数增加 612069，即约 122414 计数/轮圈。ABCD 增量为 397031/630676/612069/636723。录包 2237 条 MCU 反馈与 2235 条底盘输出样本的峰值 PWM 和速度输出均为零。证据 `field-data/verification/field-encoder-handroll-6b6264c-cpKWI4/measurement-summary.txt`。
+- 左后轮 A 的差异集中在约 12.5 s 的计数近停。该段 A 仅增加 152，而 B/C/D 增加约 21.2–22.7 万，RTK 前进约 0.384 m。恢复后近直线段 A/C 增量分别为 385093/385252。此前三次有动力直行中 A 与其余轮的中位计数比为 0.961–1.041，手推异常不能用一个静态 A 比例解释。证据同一手推录包与 `preceding-powered-wheel-comparison.txt`。本轮先单独标记 A 测实际转数，四轮统一校正等待该对照。
+- 单独标记 A 的第二次 Motor OFF 手推中，用户观察 A 连续转满五圈，四轮原始计数增量为 607322/624720/610321/624715。A 为约 121464 计数/轮圈，RTK 净位移 1.0805 m。此前 A 的持续计数近停现象本轮未复现，来源仍未定。1898 条 MCU 反馈和 1897 条底盘输出的峰值 PWM 与速度输出为零。两个会话结束后撤销临时 GST，释放 C30D 和 GNSS 串口。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/measurement-summary.txt`。
