@@ -17,7 +17,7 @@ import yaml
 
 from slicer_interfaces.msg import UgvStatus
 from slicer_interfaces.srv import Servo, ServoResponse
-from slicer_base.driver_core import ServoMailbox, StopObservation, WheelSample
+from slicer_base.driver_core import ServoMailbox, StopObservation, WheelSample, wheel_odometry_config
 
 
 BODY_OUTPUT = "/ugv/internal/body_velocity"
@@ -280,7 +280,7 @@ class BaseDriver:
         try:
             if not self.mock:
                 link, self.protocol, chassis, self.recovery_tools = load_hardware()
-                self.odom = chassis.Odometry(dict(self.config, port_order=list("ABCD")))
+                self.odom = chassis.Odometry(wheel_odometry_config(self.config))
                 self.recovery = self.recovery_tools.LinkRecovery(arm_watchdog=True)
                 self.car = link.Chassis(self.config)
                 self.car.configure(self.config["encoder_signs"])

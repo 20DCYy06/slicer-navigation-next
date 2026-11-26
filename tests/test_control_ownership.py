@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src/slicer_base/src'))
 
-from slicer_base.driver_core import ServoMailbox, StopObservation, WheelSample
+from slicer_base.driver_core import ServoMailbox, StopObservation, WheelSample, wheel_odometry_config
 from slicer_base.motion_guard import MotionLimits, swept_clear
 from slicer_base.velocity_mux import VelocityMux
 
@@ -104,6 +104,30 @@ class ControlOwnership(unittest.TestCase):
         delta, dt = wheel.update((0x30, (2147483647, 2, -3, 4)))
         assert delta == [1, 2, 3, 4]
         assert dt == 64e-6
+
+
+    def test_wheel_odometry_counts_leave_link_counts_intact(self):
+        config = dict(counts_per_revolution=60000, odometry_counts_per_revolution=120000,
+                      wheel_diameter=.065)
+        original = config.copy()
+
+        odometry = wheel_odometry_config(config)
+
+        self.assertEqual(odometry['counts_per_revolution'], 120000)
+        self.assertEqual(odometry['port_order'], list('ABCD'))
+        self.assertEqual(odometry['wheel_diameter'], .065)
+        self.assertEqual(config, original)
+
+    def test_wheel_odometry_defaults_to_existing_link_counts(self):
+        config = dict(counts_per_revolution=60000, wheel_diameter=.065)
+
+        self.assertEqual(wheel_odometry_config(config), dict(config, port_order=list('ABCD')))
+
+    def test_wheel_odometry_rejects_invalid_count_overrides(self):
+        for counts in (0, -1, True, 120000.0, '120000'):
+            with self.subTest(counts=counts), self.assertRaises(ValueError):
+                wheel_odometry_config(dict(counts_per_revolution=60000,
+                                           odometry_counts_per_revolution=counts))
 
 
     def test_guard_sweeps_signed_arcs_and_blocks_unknown(self):

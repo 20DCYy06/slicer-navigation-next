@@ -6,6 +6,14 @@ import struct
 from threading import Lock
 
 
+def wheel_odometry_config(config):
+    """Apply the host calibration to odometry while keeping the MCU link profile intact."""
+    counts = config.get("odometry_counts_per_revolution", config["counts_per_revolution"])
+    if type(counts) is not int or counts <= 0:
+        raise ValueError("odometry_counts_per_revolution must be a positive integer")
+    return dict(config, counts_per_revolution=counts, port_order=list("ABCD"))
+
+
 class WheelSample:
     def __init__(self, signs):
         self.signs = signs

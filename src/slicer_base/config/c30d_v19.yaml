@@ -7,6 +7,9 @@ usb_pid: 21972
 serial_number: '5CF0016377'
 baud: 115200
 counts_per_revolution: 60000
+# Motor OFF wheel marks measured about 121–122k raw counts per revolution.
+# Use the nominal doubled count scale in host odometry only.
+odometry_counts_per_revolution: 120000
 max_wheel_mm_s: 600
 pwm_signs: [-1, 1, 1, 1]
 encoder_signs: [-1, 1, -1, 1]
