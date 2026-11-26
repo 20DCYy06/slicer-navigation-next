@@ -195,6 +195,8 @@ class BaseDriver:
             "body_source": body.get("source"),
             "body_vx_mps": body.get("vx_m_s"),
             "body_wz_rps": body.get("wz_rad_s"),
+            "body_target_vx_mps": body.get("target_vx_m_s"),
+            "body_target_wz_rps": body.get("target_wz_rad_s"),
         }
         diagnostic.values = [KeyValue(key=name, value=str(value)) for name, value in values.items()]
         message = DiagnosticArray(status=[diagnostic])

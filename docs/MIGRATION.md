@@ -169,3 +169,16 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 回放实际原始计数，左后轮手推段的 RTK 净位移为 1.0805 m，旧/新主机里程计分别为 2.0841/1.0477 m。首次挡板运行的近直线准备窗口为 0.9133 m，旧/新分别为 1.8222/0.9141 m。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/odometry-scale-replay.txt`。
 - 封存 install 的局部 EKF 双路回放在共有 11.37 s 窗口内，LIO 净位移 1.0599 m，旧车轮输入的滤波前向速度积分为 2.0211 m，校准后为 1.0445 m。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/ekf-replay/result.txt`。该候选待监督的短直行检验，A 先前短时计数异常仍单独保留现场记录。
 - 独立构建封存的 `aea79e8` 通过 40 项单测及带模拟 GNSS 融合的 WGS84 准备取消、导航、停稳与复核闭环，合成终点 x=2.501 m。证据 `field-data/verification/field-encoder-left-rear-6b6264c-FJ6fjM/wheel-scale-wgs-mock.txt`。正式回退发布指向 v1.9。
+
+### 校准后实车直行与指令标度
+
+- 候选 `aea79e8` 在 Motor OFF 核对 1.08 m 直行走廊和起终点净距后，用户监督发送一条本地目标，计划指令上限 0.20 m/s。轮速、LIO、融合里程计及 RTK 净位移分别为 0.7254、0.7376、0.7382、0.7283 m，轮速/RTK 为 0.996。校准后的轮速在本次有动力直线中得到独立证实。A 手推第一次短时近停可能与车轮卸载有关，此为现场推测。
+- 本地任务在标记为 25 s 的期限耗尽后安全停稳，map 残差 0.343 m，结果 `TIMEOUT`，Hold 归零。25 次全局平滑规划有效，Guard 无持续拦截。DWA 峰值前向指令 0.08733 m/s，前 2.19 ms 校准 `/odom.vx` 为 0.04701 m/s，相差 0.04031 m/s，与 10 Hz、0.4 m/s² 的每周期增量吻合。有效输出的积分为 1.447 m，校准速度积分约 0.739 m，MCU 旧标度反馈积分约 1.456 m。实车证据显示校准后前向反馈和下发的车端指令仍使用不同标度，限制了动态窗口里的可选速度。
+- 证据 `field-data/verification/field-local-scale-aea79e8-A8nu4G`。此次目标在 recorder 建立订阅前发出，bag 缺少 `/ugv/navigate/goal`，目标长度由执行日志记录，时间轴按结果 GoalID 的时间戳恢复。下一次实车录包等目标话题的 recorder TCP 连接建立后发目标。结束后恢复临时 GST，关闭现场会话。
+- 同一封存版的 BT 接口和现场 UI 已核对。隔离 mock 通过替换、迟到取消、终态停车与时间戳、Hold/Release 和无效舵机通道。封存 UI 可构造本地及 WGS84 目标并拒绝越界输入。本次核验未打开桌面窗口。证据 `field-data/verification/bt-ui-standalone-aea79e8-Neppub`。
+
+### C30D V1.10 物理速度尺度
+
+- 独立硬件提交 `6a09d7797d4cfff2f8aef4fcad57804cc087d728` 将 120000 计数/圈用于 MCU 的毫米/计数换算。原始编码器计数、极性和 60000 CPR 握手保持兼容，`0x16` 指令仍为 mm/s 与 mrad/s，`0x90` 轮速和 `0x93` 车体前向速度使用修正后的物理量。轮 PI、车体速度闭环、陀螺仪航向和看门狗沿用原实现与增益。依据安全用途分别保留静止、堵转和反向保护原始计数灵敏度，以及编码器跳变的 1.6 m/s 物理门限。
+- 原生回归覆盖 1175 计数/10 ms 约为 200 mm/s、原始帧/车体指令、计数回绕及保护门限。ARM 镜像 SHA256 `f959b58d712e77aa8b617d0d9b56006ac926aac3e8b2c7571b8eba160abdfed0`。归档 V1.9 镜像 SHA256 `f152dbdfafbb3bcab569edd77cad48ef010cb832b0bc560f201b4be6c68e82e5`，现场软件回退发布保留。
+- 独立硬件主机配对提交 `eeb56f78843655e505bbee9baa4e287b4d2051df` 以 `0x84` 能力版本 2 验证 V1.10。导航显式选择两个 V1.10 配置。主机轮速里程计仍直接用原始计数和 120000 计数/圈，速度指令直接编码为固件单位。首轮配对场测的指令上限为 0.10 m/s，对应先前低速测试的实际速度量级。优先以短直行、一次小角度转向及停稳核对 MCU、LIO、RTK，然后验证带实时 RTK 融合的 WGS84 及完整绕障。

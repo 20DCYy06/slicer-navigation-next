@@ -38,6 +38,12 @@ def main():
     master = rosgraph.Master(prefix)
     planner, footprint = shared_limits(master)
     planner_prefix = prefix + "/DWAPlannerROS/"
+    min_linear_param = planner_prefix + "min_vel_trans"
+    if master.hasParam("/ugv/motion/min_navigation_linear_mps"):
+        min_linear = float(master.getParam("/ugv/motion/min_navigation_linear_mps"))
+        if not math.isfinite(min_linear) or not 0 < min_linear <= planner["max_vel_x"]:
+            raise ValueError("invalid shared min_navigation_linear_mps")
+        master.setParam(min_linear_param, min_linear)
     if master.getParam(planner_prefix + "min_vel_x") != 0:
         raise ValueError("DWAPlannerROS/min_vel_x must be zero for forward-only navigation")
     if master.getParam(planner_prefix + "use_dwa"):
@@ -49,7 +55,7 @@ def main():
             raise ValueError("DWA controller_frequency must be positive and finite")
         linear = min(planner["max_vel_x"], planner["acc_lim_x"] / frequency)
         angular = min(planner["max_vel_theta"], planner["acc_lim_theta"] / frequency)
-        min_linear = master.getParam(planner_prefix + "min_vel_trans")
+        min_linear = master.getParam(min_linear_param)
         min_angular = master.getParam(planner_prefix + "min_vel_theta")
         if min_linear > linear + 1e-4 and min_angular > angular + 1e-4:
             raise ValueError(

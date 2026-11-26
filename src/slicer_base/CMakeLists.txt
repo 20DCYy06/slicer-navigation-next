@@ -15,7 +15,7 @@ if(EXISTS "${SLICER_C30D_HARDWARE_ROOT}/Host/rtk/c30d_link.py")
   find_package(Git REQUIRED)
   execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${SLICER_C30D_HARDWARE_ROOT}" rev-parse HEAD
     OUTPUT_VARIABLE c30d_revision OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE c30d_result)
-  if(NOT c30d_result EQUAL 0 OR NOT c30d_revision STREQUAL "842999ee65581d3c81756f52c012f2b6c4b9a609")
+  if(NOT c30d_result EQUAL 0 OR NOT c30d_revision STREQUAL "eeb56f78843655e505bbee9baa4e287b4d2051df")
     message(FATAL_ERROR "C30D hardware checkout must match the revision pinned in dependencies.repos")
   endif()
   install(DIRECTORY "${SLICER_C30D_HARDWARE_ROOT}/Host/"

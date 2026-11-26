@@ -36,6 +36,21 @@ roslaunch slicer_bringup ugv.launch
 默认启动用于静态检查，C30D、GNSS 接收机和 MID360 默认不开启。软件回放可用
 `driver_mock:=true start_lio:=false start_perception:=false`，通过合成传感器输入闭环。
 
+## C30D v1.10 首轮现场验证
+
+完成 V1.10 镜像整片读回与 USB 零输出验收后，从配套封存候选目录启动。
+
+```bash
+roslaunch slicer_bringup ugv.launch hardware_enabled:=true \
+  hardware_config:="$PWD/install/share/slicer_base/config/c30d_v110.yaml" \
+  motion_config:="$PWD/install/share/slicer_bringup/config/motion_c30d_v110_field.yaml"
+```
+
+V1.10 的 `0x84` 车身能力版本为 2。主机校验配对后才进入驱动循环，`0x16` 直接使用物理速度。
+首轮线速上限是 0.10 m/s，保留既有低速试验的地面速度范围。用一次短直行和一次低速转向核对
+MCU 接受目标、车身实测速度、轮速里程计与 LIO，直行再取独立 RTK 位移。确认停稳后进入开启
+实时 RTK 融合的 WGS84 试验。回到 V1.9 时配对旧固件镜像和 V1.9 主机发布。
+
 ## 单人监督阶段
 
 1. 现场负责人确认原栈已退出，并在车旁保留可立即关闭驱动的手段。唯一执行流启动候选。
