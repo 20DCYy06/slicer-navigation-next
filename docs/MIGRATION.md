@@ -98,3 +98,5 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 末段停滞由两项直接证据解释。DWA 记录 76 次 odom→map 向未来查询，最大超前 5.892 ms。全局规划另有 15 次拒绝；起点附近左后方车体相对位置重复出现近距点，致命栅格距车心约 0.20–0.283 m，小于 0.315 m 规划硬净距，目标栅格本身空闲。实际近距点来源未确定。Guard 的 3 次拦截发生在准备阶段。
 - 针对已量化的 TF 请求，下一候选把全局 EKF 的 TF 发布偏移从 50 ms 改成 60 ms。按录包日志时序计算，额外 10 ms 覆盖了全部 76 次查询差值。定位测量时间和 TF 发布所有权保持原值。真实近距回波须先查明来源，场地需能保留现有规划净距，然后做下一次监督 WGS84。偏移配置使用 [robot_localization Noetic 文档的标准参数](https://github.com/cra-ros-pkg/robot_localization/blob/noetic-devel/doc/state_estimation_nodes.rst#transform_time_offset)。
 - 实车会话结束后撤销 UM982 的临时 GST 输出。恢复后继续读到 GGA/GSA/GSV/RMC，四秒内 GST 为零，未将临时设置写入接收机持久配置。
+
+- TF 时序候选 `40b150c5c805889ca5cc53df1616f8d2556aec00` 已独立安装封存。新 install 从空 overlay 终端可定位接口、bringup 和 UI，33 项单测及 20 Hz/1 Hz、0.20 m/s 指令上限的 WGS84 合成闭环通过。模拟终点 x=2.472 m，记录 `field-data/verification/wgs-tf-timing-result.txt`。实车以本地直行、运动中替换/取消、WGS84 停稳配准和进入导航为已验证范围；WGS84 到点、实时 GNSS 融合、转向与绕障需监督复测。
