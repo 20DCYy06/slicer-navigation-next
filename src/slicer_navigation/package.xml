@@ -30,10 +30,12 @@
   <exec_depend>roslib</exec_depend>
   <exec_depend>rospy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>slicer_base</exec_depend>
   <exec_depend>slicer_interfaces</exec_depend>
   <exec_depend>slicer_localization</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
   <export>
     <nav_core plugin="${prefix}/plugins/global_planner_plugin.xml"/>
     <nav_core plugin="${prefix}/plugins/local_planner_plugin.xml"/>

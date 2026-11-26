@@ -8,11 +8,13 @@ from time import monotonic, sleep
 
 import actionlib
 import rospy
+import tf2_ros
 from actionlib_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Point, Pose, PoseStamped
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from tf.transformations import quaternion_from_euler
+from tf2_geometry_msgs import do_transform_pose
 
 from slicer_interfaces.msg import NavigateToPointAction, NavigateToPointFeedback as Feedback
 from slicer_interfaces.msg import NavigateToPointGoal as Goal, NavigateToPointResult as Result
@@ -77,6 +79,7 @@ class NavigationServer:
         self.pose = None
         self.lio_stamp = rospy.Time()
         self.grid = None
+        self.local_grid = None
         self.scan_stamp = rospy.Time()
         self.last_result = None
         self.last_status_at = 0.0
@@ -97,6 +100,8 @@ class NavigationServer:
         self.preparation_timeout = rospy.get_param("~preparation_timeout_s", 60.0)
         self.geo = RosGeographicSession()
         self.move_base = MoveBaseAdapter()
+        self.transforms = tf2_ros.Buffer()
+        self.transform_listener = tf2_ros.TransformListener(self.transforms)
         self.claim = rospy.ServiceProxy("/ugv/internal/nav_authority", NavigationAuthority)
         self.velocity = rospy.Publisher("/ugv/internal/nav_velocity", NavigationVelocity, queue_size=1)
         self.status = rospy.Publisher("/ugv/internal/navigation_status", UgvStatus, queue_size=1)
@@ -106,6 +111,7 @@ class NavigationServer:
             rospy.Subscriber("/lio/odom", Odometry, self.on_lio, queue_size=1),
             rospy.Subscriber("/scan", LaserScan, self.on_scan, queue_size=1),
             rospy.Subscriber(MOVE_BASE + "/global_costmap/costmap", OccupancyGrid, self.on_grid, queue_size=1),
+            rospy.Subscriber(MOVE_BASE + "/local_costmap/costmap", OccupancyGrid, self.on_local_grid, queue_size=1),
             rospy.Subscriber(MOVE_BASE + "/DWAPlannerROS/command", PlannerVelocity, self.on_velocity,
                              queue_size=1, tcp_nodelay=True),
         ]
@@ -137,6 +143,10 @@ class NavigationServer:
     def on_grid(self, msg):
         if msg.header.frame_id == "map":
             self.grid = msg
+
+    def on_local_grid(self, msg):
+        if msg.header.frame_id == "odom":
+            self.local_grid = msg
 
     def on_scan(self, msg):
         if msg.header.frame_id == "base_link":
@@ -311,7 +321,7 @@ class NavigationServer:
             if task.move_sent or now - task.accepted > self.startup_timeout:
                 self.begin_stop(task, Result.LOCALIZATION_UNAVAILABLE, "Fresh localization, lidar scan and costmap are required")
             return
-        if geo_goal and not self.geographic_target(task, pose, grid, now):
+        if geo_goal and not self.geographic_target(task, now):
             return
         if task.target is None and not geo_goal:
             task.target = deepcopy(task.goal.local_target)
@@ -326,7 +336,7 @@ class NavigationServer:
             return
         self.drive(task, now, base)
 
-    def geographic_target(self, task, pose, grid, now):
+    def geographic_target(self, task, now):
         if not self.geo.operational:
             self.begin_stop(task, Result.LOCALIZATION_UNAVAILABLE, "Geographic navigation is disabled")
             return False
@@ -367,11 +377,37 @@ class NavigationServer:
             self.begin_stop(task, Result.SUCCESS, "Alignment candidate ready")
             return False
         if task.drive_target is None:
-            candidate = preparation_candidate(grid, pose.pose.pose, self.footprint, 2.0)
-            if candidate is None:
-                self.begin_stop(task, Result.ALIGNMENT_SPACE_INSUFFICIENT, "No observed 2 m preparation corridor")
-                return False
-            task.drive_target = map_pose(*candidate)
+            return self.choose_preparation_target(task, now)
+        return True
+
+    def choose_preparation_target(self, task, now):
+        grid = self.local_grid
+        try:
+            if grid is None or not fresh(grid.header.stamp, 1.5) or grid.header.stamp <= self.grid_after:
+                raise ValueError("Fresh local costmap unavailable")
+            # Query the latest common epoch of map and odom, then use it for
+            # both the local footprint check and the target transformation.
+            at = self.transforms.lookup_transform("map", "base_link", rospy.Time()).header.stamp
+            if not fresh(at, .5):
+                raise ValueError("Fresh chassis pose in map and odom unavailable")
+            base = self.transforms.lookup_transform("odom", "base_link", at)
+            to_map = self.transforms.lookup_transform("map", "odom", at)
+        except (tf2_ros.TransformException, ValueError) as exc:
+            task.reason = str(exc)
+            if now - task.accepted > self.startup_timeout:
+                self.begin_stop(task, Result.LOCALIZATION_UNAVAILABLE,
+                                "Fresh local costmap and synchronized odom/map TF required")
+            return False
+
+        p = base.transform.translation
+        pose_in_odom = Pose(position=Point(p.x, p.y, 0.0), orientation=base.transform.rotation)
+        candidate = preparation_candidate(grid, pose_in_odom, self.footprint, 2.0)
+        if candidate is None:
+            self.begin_stop(task, Result.ALIGNMENT_SPACE_INSUFFICIENT, "No observed 2 m preparation corridor")
+            return False
+        target_in_odom = map_pose(*candidate)
+        target_in_odom.header = base.header
+        task.drive_target = do_transform_pose(target_in_odom, to_map)
         return True
 
     def drive(self, task, now, base):

@@ -1,6 +1,8 @@
 """Select a bounded preparation path wholly inside observed clear costmap cells."""
 import math
 
+from slicer_base.motion_guard import swept_clear
+
 from slicer_navigation.arrival_check import yaw_of
 
 
@@ -17,30 +19,23 @@ def grid_cell(grid, x, y):
 
 
 def preparation_candidate(grid, pose, footprint, distance):
-    radius = max(math.hypot(*point) for point in footprint)
-    resolution = grid.info.resolution
-    if (not math.isfinite(resolution) or not .01 <= resolution <= .50
-            or len(grid.data) != grid.info.width * grid.info.height):
+    info = grid.info
+    if (not .001 <= info.resolution <= 1
+            or not info.width or not info.height or len(grid.data) != info.width * info.height):
         return None
-    start = pose.position
-    yaw = yaw_of(pose.orientation)
-    clearance = radius + math.sqrt(2) * resolution
-    cells = math.ceil(clearance / resolution)
-    offsets = [(i * resolution, j * resolution) for i in range(-cells, cells + 1)
-               for j in range(-cells, cells + 1) if math.hypot(i, j) * resolution <= clearance]
-
-    def clear(x, y):
-        for ox, oy in offsets:
-            index = grid_cell(grid, x + ox, y + oy)
-            if index is None or not 0 <= grid.data[index] < 85:
-                return False
-        return True
-
-    steps = math.ceil(distance / (resolution / 2))
+    origin = info.origin.position.x, info.origin.position.y, yaw_of(info.origin.orientation)
+    start = (pose.position.x, pose.position.y, yaw_of(pose.orientation))
+    if not all(math.isfinite(value) for value in (*origin, *start)):
+        return None
+    occupancy = dict(origin=origin, resolution=info.resolution, width=info.width,
+                     height=info.height, data=grid.data)
+    x, y, yaw = start
     for turn in (0, 1, -1, 2, -2, 3, -3, 4):
-        heading = yaw + turn * math.pi / 4
-        dx, dy = distance * math.cos(heading), distance * math.sin(heading)
-        if all(clear(start.x + dx * step / steps, start.y + dy * step / steps)
-               for step in range(steps + 1)):
-            return start.x + dx, start.y + dy, heading
+        angle = turn * math.pi / 4
+        if turn and not swept_clear(start, 0.0, math.copysign(1.0, angle),
+                                    footprint, occupancy, abs(angle)):
+            continue
+        heading = yaw + angle
+        if swept_clear((x, y, heading), 1.0, 0.0, footprint, occupancy, distance):
+            return x + distance * math.cos(heading), y + distance * math.sin(heading), heading
     return None
