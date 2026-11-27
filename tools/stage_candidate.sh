@@ -3,6 +3,16 @@ set -eo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
+output="$root/releases"
+if [[ $# -ne 0 ]]; then
+    if [[ $# -eq 2 && $1 == --output-dir && -n $2 ]]; then
+        output=$2
+    else
+        printf 'Usage: %s [--output-dir DIRECTORY]\n' "$0" >&2
+        [[ $# -eq 1 && $1 == --help ]] && exit 0
+        exit 2
+    fi
+fi
 if [[ -n $(git status --porcelain) ]]; then
     printf '%s\n' 'Commit or isolate source changes before staging a field candidate.' >&2
     exit 2
@@ -22,13 +32,14 @@ if [[ ! -f install/.slicer-candidate-revision || $(<install/.slicer-candidate-re
     printf '%s\n' 'Build the selected commit before staging it.' >&2
     exit 2
 fi
-mkdir -p releases
-candidate="$root/releases/$revision"
+mkdir -p -- "$output"
+output=$(cd -- "$output" && pwd -P)
+candidate="$output/$revision"
 if [[ -e "$candidate" ]]; then
     printf 'Candidate already staged at %s\n' "$candidate" >&2
     exit 2
 fi
-stage=$(mktemp -d "$root/releases/.staging-XXXXXXXX")
+stage=$(mktemp -d "$output/.staging-XXXXXXXX")
 trap 'rm -rf -- "$stage"' EXIT
 cp -a install "$stage/install"
 cp -a docs "$stage/docs"
