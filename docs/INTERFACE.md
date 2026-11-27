@@ -1,6 +1,6 @@
 # BT 与现场客户端接口
 
-ROS1 Noetic。导航、视觉与 BT 统一使用 `slicer_interfaces` **1.0.0**（导航仓库标签 `interfaces-v1.0.0`）生成的消息。`UgvStatus` 新增字段后 ROS1 消息 MD5 已改变，三个工程须使用同一导航安装重新构建。抓取 Action 由独立的 [slicer-visual-grasp](https://github.com/20DCYy06/slicer-visual-grasp) 提供，当前配套包版本为 `1.1.0`。客户端和服务端使用同一个 `ROS_MASTER_URI`。
+ROS1 Noetic。导航、视觉与 BT 统一使用 `slicer_interfaces` **1.0.0**（导航仓库标签 `interfaces-v1.0.0`）生成的消息。`UgvStatus` 的 MD5 为 `87dfec19f130b37600b8f255ea260cce`，三个工程须使用同一导航安装重新构建。客户端和服务端使用同一个 `ROS_MASTER_URI`。配套视觉版本为 [slicer-visual-grasp v1.1.0](https://github.com/20DCYy06/slicer-visual-grasp/tree/v1.1.0)。
 
 | 名称 | 类型 | 调用及功能 | 结果与取消 |
 | --- | --- | --- | --- |

@@ -62,7 +62,8 @@ def run_goal(client, goal, label, timeout):
     fields = {"step": label, "action_status": status}
     if isinstance(result, NavigateToPointResult):
         fields.update(code=result.code, reason=result.reason,
-                      stop_valid=result.stop_valid, stopped=result.stopped)
+                      stop_commanded=result.stop_commanded, stop_valid=result.stop_valid,
+                      stopped=result.stopped)
     elif result is not None:
         fields.update(success=result.success, needs_release=result.needs_release, message=result.message)
     else:

@@ -8,6 +8,7 @@ import time
 
 import actionlib
 from actionlib.action_client import CommState
+from actionlib_msgs.msg import GoalStatus
 import rospy
 from slicer_interfaces.msg import NavigateToPointAction, NavigateToPointGoal, NavigateToPointResult
 
@@ -76,7 +77,9 @@ def main():
     if result is None:
         rospy.logerr("No terminal result received. Verify the vehicle state through /ugv/status.")
         return 1
+    action_status = handle.get_goal_status()
     print(json.dumps({
+        "action_status": action_status,
         "code": result.code,
         "reason": result.reason,
         "stop_commanded": result.stop_commanded,
@@ -85,9 +88,12 @@ def main():
         "position_error_m": result.position_error_m if result.position_error_valid else None,
         "error_source": result.error_source if result.position_error_valid else None,
     }, ensure_ascii=False))
-    if canceled and result.code == NavigateToPointResult.CANCELED and result.stop_valid and result.stopped:
+    if (canceled and action_status == GoalStatus.PREEMPTED and result.code == NavigateToPointResult.CANCELED
+            and result.stop_valid and result.stopped):
         return 130
-    return 0 if result.code == NavigateToPointResult.SUCCESS and result.stop_valid and result.stopped else 1
+    succeeded = (action_status == GoalStatus.SUCCEEDED and result.code == NavigateToPointResult.SUCCESS
+                 and result.stop_valid and result.stopped)
+    return 0 if succeeded else 1
 
 
 if __name__ == "__main__":
