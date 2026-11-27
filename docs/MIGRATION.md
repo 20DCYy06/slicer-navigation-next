@@ -306,3 +306,9 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 
 - `c7a7319` 封存候选通过 46 项单测、ROS 导航 Mock 契约检查、带视觉 Mock 的 BT 顺序示例及现场 Tk UI 联调。验证了导航和视觉的界面互斥、发本动作、定向取消、失败消息、释放后续航，以及进程关闭。导航消息来自选定的封存安装，视觉 Action 来自独立视觉安装。证据 `field-data/verification/team-vision-smoke-nGEcBL`。
 - 视觉组已有软件测试在独立 ROS Master 使用相机、吸盘和底盘替身，通过抓取、释放、Guard 拦截和取消。当前现场未识别到视觉相机，确认设备到位后再做实车视觉动作。唯一正式启动入口的 `current` 选中 `v1.0.0`。9.27 m 双挡板实车验收继续作为 `b0633df` 的依据。此轮接入通过 PR 交接。
+
+### 公共契约 1.0.0 与独立现场包
+
+- 视觉接入 PR #1 已合入导航 `main`（`ad52ebd`）。视觉源码独立导入，在团队私有仓库 `slicer-visual-grasp` 发布 `v1.1.0`（`ce2a48e`）。现场包改为 `slicer_operator_ui`，沿用 `./current/run ui`。
+- 冻结标签 `interfaces-v1.0.0`。导航、视觉及 BT 示例均用这一版生成消息联调。`UgvStatus` 增加带时间与有效位的车体 WGS84 和 ENU 航向。50 项单测及隔离 ROS 测试通过，覆盖 RTK 融合与到点、实测停车语义、Mock 故障注入、BT 导航与抓取交接、UI 和独立视觉 Action。证据位于 `field-data/verification/public-contract-v1-Zfptzv/` 和 `field-data/verification/visual-contract-v1-jP5dgk/`。
+- 现场稳定 `current` 仍为原 `v1.0.0`。启用新版车端前与视觉、BT 一起切换消息版本。实车视觉待相机和吸具就绪。

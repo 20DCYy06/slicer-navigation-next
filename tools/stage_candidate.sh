@@ -7,13 +7,14 @@ if [[ -n $(git status --porcelain) ]]; then
     printf '%s\n' 'Commit or isolate source changes before staging a field candidate.' >&2
     exit 2
 fi
-for package in slicer_interfaces slicer_base slicer_localization slicer_perception slicer_navigation slicer_gnss slicer_bringup; do
+for package in slicer_interfaces slicer_base slicer_localization slicer_perception slicer_navigation slicer_gnss slicer_bringup slicer_operator_ui; do
     test -f "install/share/$package/package.xml" || {
         printf 'Build a complete install first. Missing %s\n' "$package" >&2
         exit 2
     }
 done
 test -f install/share/slicer_base/c30d/rtk/c30d_link.py
+test -x install/lib/slicer_operator_ui/operator_ui.py
 test -x install/lib/fast_lio/fastlio_mapping
 test -x install/lib/livox_ros_driver2/livox_ros_driver2_node
 revision=$(git rev-parse HEAD)

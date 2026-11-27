@@ -40,6 +40,7 @@ class MapObservation:
     covariance: Tuple[float, float, float, float]
     covariance_measured: bool
     innovation_m: float
+    base_enu: Tuple[float, float, float]
 
 
 class GeographicSession:
@@ -214,7 +215,7 @@ class GeographicSession:
                 self.pairs.append(AlignmentPair(map_pose, antenna_en))
             if self.transform is None or stamp <= self._committed_stamp:
                 continue
-            corrected = self._map_observation(observation, antenna_en, map_pose, lio_pose)
+            corrected = self._map_observation(observation, (east, north, up), map_pose, lio_pose)
             self.latest_map_observation = corrected
             if corrected.covariance_measured:
                 self.latest_measured_map_observation = corrected
@@ -272,24 +273,43 @@ class GeographicSession:
         yaw = None if yaw_enu_rad is None else wrap_yaw(yaw_enu_rad + self.transform.yaw)
         return ProjectedGoal(original, yaw_enu_rad, x, y, yaw, self.version)
 
-    def _map_observation(self, observation, antenna_en, map_pose, lio_pose):
+    def _map_observation(self, observation, antenna_enu, map_pose, lio_pose):
         # The precommit yaw offset stays frozen. The incoming yaw is LIO's
         # fixed-session observation, independent from the global EKF update.
         yaw = wrap_yaw(lio_pose.yaw + self._map_from_lio_yaw)
-        x, y = self.transform.base_xy(antenna_en, yaw, self.antenna_offset)
+        east, north, up = antenna_enu
+        x, y = self.transform.base_xy((east, north), yaw, self.antenna_offset)
         a, b, _, d = observation.covariance_en
         cosine, sine = math.cos(self.transform.yaw), math.sin(self.transform.yaw)
         xx = cosine ** 2 * a - 2 * cosine * sine * b + sine ** 2 * d
         yy = sine ** 2 * a + 2 * cosine * sine * b + cosine ** 2 * d
         xy = cosine * sine * (a - d) + (cosine ** 2 - sine ** 2) * b
         lever_x, lever_y = rotate_xy(self.antenna_offset, yaw)
+        lever_east, lever_north = rotate_xy((lever_x, lever_y), -self.transform.yaw)
         yaw_variance = self.transform.heading_std_rad ** 2
         fit_variance = self.transform.rmse_m ** 2
         cross = xy - lever_x * lever_y * yaw_variance
         covariance = (xx + lever_y ** 2 * yaw_variance + fit_variance, cross, cross,
                       yy + lever_x ** 2 * yaw_variance + fit_variance)
         return MapObservation(observation.fix.stamp_ns, x, y, covariance,
-                              observation.covariance_measured, math.hypot(x - map_pose.x, y - map_pose.y))
+                              observation.covariance_measured, math.hypot(x - map_pose.x, y - map_pose.y),
+                              (east - lever_east, north - lever_north, up))
+
+    def base_geographic_position(self, now_ns):
+        sample = self.latest_map_observation
+        if (self.transform is None or sample is None or not self.can_prepare(now_ns)
+                or not 0 <= now_ns - sample.stamp_ns <= self.max_fix_age_ns
+                or sample.innovation_m > self.max_innovation_m):
+            return None
+        return self.frame.horizontal_geodetic(sample.base_enu), sample.stamp_ns
+
+    def heading_enu(self, now_ns):
+        if self.transform is None or not self.lio_poses:
+            return None
+        pose = self.lio_poses[-1]
+        if not 0 <= now_ns - pose.stamp_ns <= self.max_pose_gap_ns:
+            return None
+        return wrap_yaw(pose.yaw + self._map_from_lio_yaw - self.transform.yaw), pose.stamp_ns
 
     def verify(self, goal, after_stamp_ns, now_ns, tolerance_m):
         if not finite(tolerance_m) or tolerance_m <= 0:

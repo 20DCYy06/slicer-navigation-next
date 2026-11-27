@@ -13,6 +13,7 @@ export SLICER_RUN_DIR="${SLICER_RUN_DIR:-$HOME/.local/share/slicer/field-data}"
 
 if [[ ${1:-} == ui ]]; then
     shift
-    exec rosrun slicer_bringup operator_ui.py "$@"
+    export SLICER_RECORD_RUN="$release/install/lib/slicer_bringup/record_run.py"
+    exec rosrun slicer_operator_ui operator_ui.py "$@"
 fi
 exec roslaunch slicer_bringup ugv_field.launch "$@"
