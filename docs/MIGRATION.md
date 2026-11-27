@@ -1,10 +1,15 @@
 # 迁移与验证记录
 
+## 日常开发切换
+
+- 团队仓库为 [20DCYy06/slicer-navigation-next](https://github.com/20DCYy06/slicer-navigation-next)。Jetson 日常导航工作区为 `/home/ugv/workspace/slicer-navigation-next`，车端和界面从 `./current/run`、`./current/run ui` 启动。旧工作区入口保留用于历史和 V1.9 成套回退。
+- `main` 的导航实现以 `94ecf19` 为基线。与 `37c2033` 的差异仅为本记录。`performance/wgs84-dwa-170` 保留 `b0633df` 的已封存行为，实车验证后再合入 `main`。接下来的导航性能开发在此工作区和仓库进行。
+
 ## 车端基线
 
 | 对象 | 读取到的版本 |
 | --- | --- |
-| 正式选择和回退入口 | `/home/ugv/workspace/slicer/run`，`current → releases/20261125-c30d-front-pwm-v19` |
+| 旧导航回退入口 | `/home/ugv/workspace/slicer/run`，`current → releases/20261125-c30d-front-pwm-v19` |
 | 回退发布源码 | `13e0afb1c16531997a922f19a23fe6987a8c05fb`，`run status` 校验成功 |
 | 回退发布的硬件库 | `0373548750bb3daf7332936652f2c5bb78cb89c7` |
 | 旧工作区检出 | `93ccd8c82fe6af332c37692ec34510baeb0f70c3`，保留未跟踪的 `.vscode/` |
@@ -20,7 +25,7 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 
 ## 实施记录
 
-- 独立工程在 `candidate` 分支；接口为独立 Catkin 包。
+- 最初独立工程在 `candidate` 分支开展，接口为独立 Catkin 包。
 - 先建立固定 `map` 局部导航及静态验证，随后接入 WGS84。室内在线建图、旧 CLI、总控、空地通信与任务队列未迁移。
 
 - Git 逐文件比较：旧正式发布到 PR14 有 62 个改动文件，包括方案 B 规划、Guard、配准和旧客户端流程。RC2 到 PR14 仅 `dependencies.repos` 硬件 pin 改动。旧发布本地硬件树与公开 pin 的主机协议代码相同，公开 pin 移除了部分旧构件和刷写脚本，并将串口默认改为显式现场配置。

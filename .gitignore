@@ -7,7 +7,13 @@
 /src/CMakeLists.txt
 /.catkin_workspace
 /releases/
+/current
 /field-data/
+*.bag
+*.bag.active
+.env
+.env.*
+ntrip_credentials*.json
 __pycache__/
 .pytest_cache/
 *.pyc
