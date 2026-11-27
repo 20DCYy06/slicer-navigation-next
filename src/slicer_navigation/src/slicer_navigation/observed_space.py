@@ -18,7 +18,10 @@ def grid_cell(grid, x, y):
     return my * grid.info.width + mx
 
 
-def preparation_candidate(grid, pose, footprint, distance):
+def preparation_candidate(grid, pose, footprint, distance, *, stop_reserve=0.0):
+    """Place the waypoint within a corridor checked over its full distance."""
+    if not 0.0 <= stop_reserve <= distance:
+        raise ValueError("preparation stop reserve lies outside the checked corridor")
     info = grid.info
     if (not .001 <= info.resolution <= 1
             or not info.width or not info.height or len(grid.data) != info.width * info.height):
@@ -37,5 +40,6 @@ def preparation_candidate(grid, pose, footprint, distance):
             continue
         heading = yaw + angle
         if swept_clear((x, y, heading), 1.0, 0.0, footprint, occupancy, distance):
-            return x + distance * math.cos(heading), y + distance * math.sin(heading), heading
+            advance = distance - stop_reserve
+            return x + advance * math.cos(heading), y + advance * math.sin(heading), heading
     return None

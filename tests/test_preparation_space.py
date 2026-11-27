@@ -37,6 +37,15 @@ class PreparationSpaceTest(unittest.TestCase):
         grid = make_grid(lambda x, y: 0 if -.25 < x < 2.3 and abs(y) < .18 else -1)
         self.assertEqual(preparation_candidate(grid, self.pose, FOOTPRINT, 2.0), (2.0, 0.0, 0.0))
 
+    def test_stopping_reserve_keeps_full_corridor_check(self):
+        def corridor(x, y):
+            return 0 if -.25 < x < 2.3 and abs(y) < .18 else -1
+
+        self.assertEqual(preparation_candidate(make_grid(corridor), self.pose, FOOTPRINT, 2.0,
+                                               stop_reserve=.25), (1.75, 0.0, 0.0))
+        blocked = make_grid(lambda x, y: 100 if 2.05 < x < 2.15 and abs(y) < .05 else corridor(x, y))
+        self.assertIsNone(preparation_candidate(blocked, self.pose, FOOTPRINT, 2.0, stop_reserve=.25))
+
     def test_unknown_or_occupied_cell_in_footprint_blocks_corridor(self):
         for occupied in (-1, 100):
             with self.subTest(occupied=occupied):

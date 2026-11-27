@@ -404,7 +404,9 @@ class NavigationServer:
 
         p = base.transform.translation
         pose_in_odom = Pose(position=Point(p.x, p.y, 0.0), orientation=base.transform.rotation)
-        candidate = preparation_candidate(grid, pose_in_odom, self.footprint, 2.0)
+        # The local footprint can clear the corridor end while the global
+        # planner's circular clearance still rejects a stop there.
+        candidate = preparation_candidate(grid, pose_in_odom, self.footprint, 2.0, stop_reserve=.25)
         if candidate is None:
             self.begin_stop(task, Result.ALIGNMENT_SPACE_INSUFFICIENT, "No observed 2 m preparation corridor")
             return False
