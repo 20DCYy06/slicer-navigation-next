@@ -42,24 +42,11 @@ ROS1 Noetic。BT 只需要 `slicer_interfaces` 生成的消息与下表公开入
 
 ## Python 客户端示例
 
-在 mock 上发送本地目标时可使用以下代码。BT 在执行节点中使用其所属 GoalHandle 做定向取消，并处理 result code。
+封存目录的 `docs/examples/navigate.py` 可直接运行。在 mock 或现场确认 Release 状态后，从已 `source install/setup.bash` 的终端执行。
 
-```python
-import actionlib
-import rospy
-from slicer_interfaces.msg import NavigateToPointAction, NavigateToPointGoal
-
-rospy.init_node("bt_example")
-client = actionlib.ActionClient("/ugv/navigate", NavigateToPointAction)
-if not client.wait_for_server(rospy.Duration(5)):
-    raise RuntimeError("Navigation server unavailable")
-goal = NavigateToPointGoal(mode=NavigateToPointGoal.LOCAL_POSE)
-goal.local_target.header.frame_id = "map"
-goal.local_target.pose.position.x = 1.0
-goal.local_target.pose.orientation.w = 1.0
-handle = client.send_goal(
-    goal,
-    transition_cb=lambda h: rospy.loginfo("result %s", h.get_result()) if h.get_result() else None,
-)
-rospy.spin()
+```bash
+/usr/bin/python3 docs/examples/navigate.py local 1.0 0.0
+/usr/bin/python3 docs/examples/navigate.py wgs84 <现场纬度> <现场经度>
 ```
+
+示例只调用 Action，Ctrl+C 取消本次 GoalHandle 并等待停车结果。终态以 JSON 输出。退出码 `0` 表示到点并实测停稳，`130` 表示取消并实测停稳，`1` 表示其余结果或未收到终态。执行 BT 时按 GoalHandle 关联本节点的反馈和终态，收到 `REPLACED` 后按当前任务处理，收到 `STOP_NOT_CONFIRMED` 时从 `/ugv/status` 核对车辆状态。

@@ -35,6 +35,19 @@ RESULT_NAMES = {
 }
 
 
+def result_text(action_status, result):
+    if result is None:
+        return f"未收到导航结果（Action 状态 {action_status}） · 停稳未确认"
+    stopped = "已停稳" if result.stop_valid and result.stopped else "停稳未确认"
+    parts = [str(RESULT_NAMES.get(result.code, result.code))]
+    if result.reason:
+        parts.append(result.reason)
+    parts.append(stopped)
+    if result.position_error_valid:
+        parts.append(f"位置误差 {result.position_error_m:.2f} m ({result.error_source})")
+    return " · ".join(parts)
+
+
 def target(mode, first, second, altitude, yaw, verify):
     coordinates = tuple(float(value) for value in (first, second))
     if not all(map(math.isfinite, coordinates)):
@@ -282,10 +295,7 @@ class Operator:
                     self.preview_text.set("投影位置待配准确定")
             elif event == "result":
                 self.active = False
-                _, result = value
-                code = RESULT_NAMES.get(result.code, result.code)
-                stopped = "已停稳" if result.stop_valid and result.stopped else "停稳未确认"
-                self.details.set(f"{code} · {result.reason} · {stopped}")
+                self.details.set(result_text(*value))
             elif event == "control":
                 self.details.set(value)
             elif event == "recording":
