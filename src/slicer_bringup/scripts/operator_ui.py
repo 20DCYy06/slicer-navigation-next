@@ -418,7 +418,9 @@ class Operator:
         if not self.last_status.is_zero() and (rospy.Time.now() - self.last_status).to_sec() > 0.5:
             self.status.set("状态已过期")
         self.update_buttons()
-        if not rospy.is_shutdown():
+        if rospy.is_shutdown():
+            self.root.destroy()
+        else:
             self.root.after(80, self.drain_events)
 
     def close(self):
