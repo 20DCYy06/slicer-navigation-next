@@ -284,3 +284,8 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 封存直线规划候选带原 DWA 1.05 s 的闭环模拟使用 6.54 m、0.20 m/s、实时 RTK 融合和 65 s 动作期限。合成车体最大横偏 0.140 m，超时后确认停稳，距终点 0.793 m。证据 `field-data/verification/straight-observed-closed-loop-f0WElE`。
 - `candidate-straight-dwa-170` 的封存候选 `b0633df` 合用直线规划与 1.70 s 预测时长。从封存安装读回 0.20 m/s、1.70 s 和实时 GNSS 融合，44 项单测通过。相同的 6.54 m 模拟和 65 s 期限下，49.489 s 以 `SUCCESS` 停稳到点，合成 RTK 误差 0.1837 m、最大横偏 0.114 m。证据 `field-data/verification/straight-dwa-170-closed-loop-eRTxL4`。该候选待监督实车长直线复测。
 - 同一组合候选在 8.7 m 双箱模拟中，33.54 s 以 0.194 m/s 行进换点，A 返回 `REPLACED`，B 沿用变换版本 1。72.872 s 停稳到点，合成 RTK 误差 0.1729 m，两箱均越过且 1524 个模拟足迹样本零接触。继续使用 135 s 的原模拟期限。证据 `field-data/verification/competition-progression-47Usuo7X/run-VUIoUVKG`。
+
+### b0633df 0.20 m/s 长直线实车验收
+
+- 迁移后在 `performance/wgs84-dwa-170` 对应的封存候选完成一次监督 WGS84 目标。起点距 B 6.821 m，2 m 配准段和 138 个全局中心线采样均已观测通过。启用实时 RTK 融合，录包中只有一条导航目标，11.677 s 进入正式导航，动作内有 732 条带源时间的 GNSS XY 观测。
+- 47.782 s 返回 `SUCCESS` 并确认停稳，Action 的 `gnss_xy` 复核误差为 0.1476 m。独立停稳 RTK 的天线净位移为 6.735 m，距 B 标记为 0.093 m，956 个 Fixed 样本的最大横偏为 0.058 m。Mux 和 MCU 回显目标峰值均为 0.200 m/s，MCU 实测速率峰值为 0.209 m/s。478 帧扫描的最大源时间延时为 0.139 s。任务结束后确认 Hold 和零输出，释放两个串口并恢复 GST 设置。证据 `field-data/verification/field-b0633df-wgs84-TmDPe8/wgs84`。
