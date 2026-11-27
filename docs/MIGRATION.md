@@ -3,7 +3,7 @@
 ## 日常开发切换
 
 - 团队仓库为 [20DCYy06/slicer-navigation-next](https://github.com/20DCYy06/slicer-navigation-next)。Jetson 日常导航工作区为 `/home/ugv/workspace/slicer-navigation-next`，车端和界面从 `./current/run`、`./current/run ui` 启动。旧工作区入口保留用于历史和 V1.9 成套回退。
-- `main` 的导航实现以 `94ecf19` 为基线。与 `37c2033` 的差异仅为本记录。`performance/wgs84-dwa-170` 保留 `b0633df` 的已封存行为，实车验证后再合入 `main`。接下来的导航性能开发在此工作区和仓库进行。
+- 首发以 `94ecf19` 为运行基线。与 `37c2033` 的差异仅为本记录。`performance/wgs84-dwa-170` 保留封存候选 `b0633df`。其规划优化已在 0.20 m/s 长直线、双挡板和行进换点实车验收后合入 `main`。接下来的导航性能开发在此工作区和仓库进行。
 
 ## 车端基线
 
@@ -295,3 +295,8 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 布置期间原始点云中断，现场人员报告同期曾启动抓取测试。仅重启采集节点后点云恢复，旧 LIO 位姿已失真，退出该会话且未发目标。确认车端由单一操作流持有后，用原候选重启。两个停稳锚点的 RTK 和地图位移分别为 1.633 m、1.636 m，用于保留原 B 的地理坐标并在新地图复测路线。
 - 起点距 B 约 9.27 m，两块挡板前沿实测距起点 2.446 m、5.854 m。配准走廊、可绕行侧及停车点通过静态检查。以 0.20 m/s 为上限发 A，32.352 s 时以 MCU 实测前向速度 0.184 m/s 越过第一块并换至 B。A 返回 `REPLACED`，B 沿用配准版本 1。两处挡板均完整越过，保守足迹模型的最小净距分别为 0.210 m、0.020 m，实测最大横偏 0.537 m。
 - 74.839 s 时 B 返回 `SUCCESS` 并确认停稳，Action 的 `gnss_xy` 复核误差 0.1792 m，独立停稳天线距 B 0.123 m。MCU 实测前向速度峰值为 0.207 m/s。车在 74.957 s 取得新的 Hold 停稳观测，退出后释放两路串口。私有脚本曾因未收到短暂的 `VERIFYING` 反馈而返回失败，已改以有效终态和独立 RTK 为据。证据 `field-data/verification/field-b0633df-double-resume-K0POv8/wgs84`。
+
+### 0.30 m/s 开阔短直行
+
+- 换电上电后在 `performance/speed-030` 的 `6870928` 封存候选验证 1.50 m 本地直行。配置相对 0.20 m/s 档仅改线速度上限，沿用 V1.10 及 1.70 s DWA 预测时长。发目标前确认 3.0 m 已观测足迹扫掠区、RTK Fixed/GST、定位新鲜、停稳与四轮零 PWM。
+- 只发送一条目标，10.284 s 返回 `SUCCESS`，地图误差 0.0648 m。Mux 指令峰值 0.2942 m/s，MCU 回显目标峰值 0.2940 m/s，MCU 实测速率峰值 0.3000 m/s。独立停稳 RTK、LIO 和轮速里程计的净位移分别为 1.4498 m、1.4504 m 和 1.4621 m。已确认新的 Hold 停稳，退出后释放两路串口并恢复 GST。此档验收范围为开阔短直行。证据 `field-data/verification/field-v110-speed-030-784kQE/straight`。
