@@ -3,10 +3,12 @@
   <arg name="serial_device" default="/dev/gnss"/>
   <arg name="ntrip" default="false"/>
   <arg name="ntrip_credentials_file" default="/run/secrets/slicer_ntrip.json"/>
+  <arg name="um982_gst" default="false"/>
   <node pkg="slicer_gnss" type="gnss_node.py" name="slicer_gnss" output="screen">
     <rosparam command="load" file="$(arg config_file)"/>
     <param name="serial_port" value="$(arg serial_device)"/>
     <param name="ntrip_enabled" value="$(arg ntrip)"/>
     <param name="ntrip_credentials_file" value="$(arg ntrip_credentials_file)"/>
+    <param name="um982_gst" value="$(arg um982_gst)"/>
   </node>
 </launch>

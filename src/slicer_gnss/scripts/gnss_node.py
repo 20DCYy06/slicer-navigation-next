@@ -105,8 +105,9 @@ def main():
         if baud <= 0:
             raise ValueError("baud must be positive")
         worker = SerialSource(events, port=port, baud=baud, pause_file=pause_file,
-                              expected_serial=str(rospy.get_param("~expected_usb_serial", "")))
-        rospy.loginfo("Serial owner: 8N1/no flow control, DTR=RTS=false; RTCM only when explicitly enabled")
+                              expected_serial=str(rospy.get_param("~expected_usb_serial", "")),
+                              um982_gst=bool(rospy.get_param("~um982_gst", False)))
+        rospy.loginfo("Serial owner: 8N1, no flow control, DTR=RTS=false")
     else:
         raise ValueError("source must be tcp or serial; replay sources are not supported")
     ntrip = None

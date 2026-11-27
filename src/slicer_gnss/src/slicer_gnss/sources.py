@@ -1,4 +1,4 @@
-"""Live TCP/serial sources; one serial owner reads NMEA and writes validated RTCM.
+"""Live TCP/serial sources; one serial owner handles NMEA, GST setup and validated RTCM.
 
 The serial subclass preserves serial_probe.py's POSIX no-input-flush hook,
 captures original termios before reconfiguration, and restores it on close.
@@ -175,11 +175,13 @@ class TcpSource(LiveSource):
 
 
 class SerialSource(LiveSource):
-    def __init__(self, events, port, baud=115200, pause_file=None, expected_serial="", **kwargs):
+    def __init__(self, events, port, baud=115200, pause_file=None, expected_serial="",
+                 um982_gst=False, **kwargs):
         super().__init__(events, **kwargs)
         self.port, self.baud = port, baud
         self.pause_file = pause_file
         self.expected_serial = expected_serial
+        self.um982_gst = um982_gst
         self.write_requests = queue.Queue(maxsize=1)
         self.gga_lock = threading.Lock()
         self.current_gga = None
@@ -310,6 +312,12 @@ class SerialSource(LiveSource):
                     raise SourceProtocolError("serial_exclusive_ioctl_unavailable")
                 fcntl.ioctl(receiver.fileno(), termios.TIOCEXCL)
                 exclusive = True
+            if self.um982_gst:
+                # The field UM982 needs same-epoch GST for the stopped RTK check.
+                # This requests 1 Hz output on the current port without saving it.
+                command = b"GPGST 1\r\n"
+                if receiver.write(command) != len(command):
+                    raise SourceProtocolError("serial_gst_write_short")
             self.emit({"kind": "transport", "connected": True, "error": ""})
             status(True)
             next_status = time.monotonic() + 1.0

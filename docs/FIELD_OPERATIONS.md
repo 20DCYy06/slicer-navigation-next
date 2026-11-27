@@ -1,98 +1,62 @@
 # Slicer 现场操作
 
-## 独立 mock 与现场客户端
+## 启动车端与界面
 
-从新工程根目录运行
-
-```bash
-tools/build_candidate.sh --mock-only -j2
-source install/setup.bash
-export ROS_MASTER_URI=http://127.0.0.1:14673 ROS_IP=127.0.0.1
-roslaunch slicer_bringup ugv_mock.launch
-```
-
-在同一桌面的另一个同配置终端运行 `rosrun slicer_bringup operator_ui.py`。
-已验证输入预览、发送本地目标、取消、状态刷新及开始与结束录包。Mock 可用
-`scenario:=preparing`、`path_failure`、`gnss_loss`、`manual_override`、
-`estop` 和 `stop_unconfirmed` 启动相应场景。Mock 与候选使用各自的 ROS Master。
-
-## 候选构建和部署
-
-`dependencies.repos` 声明四个固定源码版本。在独立工程根目录运行
-`vcs import . < dependencies.repos` 获取缺少的依赖，然后运行
-`tools/build_candidate.sh -j2`。Noetic 基础环境位于 `/opt/ros/noetic`。
-完整构建成功后，可用 `tools/stage_candidate.sh` 复制 install 到新工程
-`releases/<完整源码提交>/`。它打印目录，生成 `release.json`，并记录配置摘要。
-
-从待测候选目录运行
+在 Jetson 上进入交付的 `releases/<源码提交>/` 目录。先退出当前运行的车端栈，确保底盘和
+GNSS 串口只有一个持有者。确认现场有人可随时关闭实体驱动，再执行
 
 ```bash
-source install/setup.bash
-export SLICER_RELEASE_MANIFEST="$PWD/release.json"
-export SLICER_RUN_DIR="$PWD/../../field-data"
-roslaunch slicer_bringup ugv.launch
+./run
 ```
 
-默认启动用于静态检查，C30D、GNSS 接收机和 MID360 默认不开启。软件回放可用
-`driver_mock:=true start_lio:=false start_perception:=false`，通过合成传感器输入闭环。
-
-## C30D v1.10 首轮现场验证
-
-完成 V1.10 镜像整片读回与 USB 零输出验收后，从配套封存候选目录启动。
+启动后驻车 Hold。默认同时启用本地导航、WGS84、NTRIP 及配准后的实时 RTK 平移融合。
+线速度上限为 0.10 m/s，已有完整箱体绕行记录。只用本地坐标时执行 `./run outdoor:=false`。
+开阔场地可选以下 0.20 m/s 配置。各档的实测工况见[迁移与验证记录](MIGRATION.md)。
 
 ```bash
-roslaunch slicer_bringup ugv.launch hardware_enabled:=true \
-  hardware_config:="$PWD/install/share/slicer_base/config/c30d_v110.yaml" \
-  motion_config:="$PWD/install/share/slicer_bringup/config/motion_c30d_v110_field.yaml"
+./run motion_config:="$PWD/install/share/slicer_bringup/config/motion_c30d_v110_speed_020.yaml"
 ```
 
-V1.10 的 `0x84` 车身能力版本为 2。主机校验配对后才进入驱动循环，`0x16` 直接使用物理速度。
-首轮线速上限是 0.10 m/s，保留既有低速试验的地面速度范围。用一次短直行和一次低速转向核对
-MCU 接受目标、车身实测速度、轮速里程计与 LIO，直行再取独立 RTK 位移。确认停稳后进入开启
-实时 RTK 融合的 WGS84 试验。回到 V1.9 时配对旧固件镜像和 V1.9 主机发布。
+户外模式默认使用本车的 UM982 USB 设备和 `~/.config/slicer/{gnss.yaml,ntrip_credentials.json}`。
+换车时用 `gnss_serial_device:=<设备路径>`、`gnss_config:=<配置文件>` 和
+`ntrip_credentials_file:=<凭据文件>` 指定。串口节点启动时请求 1 Hz GST，供停稳后地理复核，
+设置在接收机上随重启清除。接收机已提供 GST 或使用其他型号时可传 `um982_gst:=false`。
 
-## 单人监督阶段
+在同一桌面另开终端，进入同一发布目录后运行 `./run ui`。车端和 UI 使用同一个
+`ROS_MASTER_URI`，未设置时使用本机 ROS Master。BT 从同一安装环境调用
+[公开 Action、服务与状态](INTERFACE.md)。
 
-1. 现场负责人确认原栈已退出，并在车旁保留可立即关闭驱动的手段。唯一执行流启动候选。
-   实机参数入口为 `roslaunch slicer_bringup ugv.launch hardware_enabled:=true`。
-   先维持初始 Hold，核对手柄与停稳状态、雷达、局部与全局里程计，以及 `map → odom → base_link`。
-2. 得到现场确认后开始录包，再解除 Hold，等状态显示底盘在线且 Hold 已解除，选择 1–2 m 可见空地中的 `map` 目标。
-   UI 预览原始坐标后发送。观察车的方向与停止，保留停车观测和独立的地面测量。
-   受控试运行可通过 `motion_config:=<绝对路径>` 选择经记录的低速配置，规划器与 Guard 共用该配置。
-3. 下一轮录包覆盖行进中替换和取消。取消后按反馈确认停车，驻车用 Hold。
-   游戏手柄 B 键会锁存软件急停，硬件 Motor OFF 单独切断驱动能力。两者需用现车逐项核对。
-4. 地理试验使用 `enable_geographic:=true enable_gnss_receiver:=true` 接入有效接收机。
-   本车接收机通过 `gnss_config:=/home/ugv/.config/slicer/gnss.yaml` 和
-   `gnss_serial_device:=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00` 指定。
-   `enable_gnss_fusion` 独立控制 GNSS xy 纠偏。已配置的 NTRIP 通过 `ntrip:=true` 与
-   `ntrip_credentials_file:=/home/ugv/.config/slicer/ntrip_credentials.json` 选择受保护凭据。
-   UI 显示定位状态与服务端投影。要求地理复核时，需要停稳后取得同历元不确定度可用的新 RTK Fixed。
-   当前 UM982 的默认输出包含 GGA/GSA/GSV/RMC。实测可在 GNSS 串口独占、底盘停止时
-   向当前接收机端口临时启用 `GPGST 1`，获得 1 Hz GST。现场可按接收机手册用
-   `UNLOG GPGST` 撤销这项输出；本候选使用易失设置。 [UM982 指令手册](https://en.unicore.com/uploads/file/20241219/Unicore_Reference_Commands_Manual_For_N4_High_Precision_Products_V2_EN_R1.4.pdf)
+## 发目标、停车与录包
 
-UI 普通关闭会尝试取消其目标。先使用取消并观察反馈，再结束现场会话。录包也可通过
-`rosrun slicer_bringup record_run.py --output <目录> --manifest <候选的 release.json>` 运行，
-Ctrl+C 收尾。录包持续到停车观测完成后，记录现场工况和独立位置测量。录包包含全局规划
-状态 `GlobalPlanner/smoothing_status`，可核对起点、目标净距及地图边界拒绝。
+1. 在界面确认底盘在线、定位有效、车已停稳。WGS84 任务再确认 RTK Fixed，并保留「地理到点复核」。
+2. 点击「开始录包」和「解除 Hold」，等状态更新。选择「本地 map」输入米制 x、y，或选择
+   「WGS84」输入十进制度的纬度与经度。核对「预览目标」后点击「启动导航」。
+   首个 WGS84 目标可触发短距自动配准，服务端在反馈里给出投影及变换版本。
+3. 停止任务时点击「取消本目标」，观察停车反馈，再点击「驻车 Hold」。手柄 B 键是软件急停。
+   需要立刻切断驱动时使用车上实体 Motor 开关。
+4. 停稳后点击「结束录包」，等界面显示保存成功。默认目录为 `~/.local/share/slicer/field-data/`，
+   每次运行包含 bag、有效运动配置和发布标识。退出界面后，在车端终端用 Ctrl+C 停栈。
 
-## Motor OFF 下的雷达快照
+## 配套与回退
 
-先按候选部署步骤设置环境，并使用独立 ROS Master。在 Motor OFF 和车身静止时启动感知链。
+本发布配对 C30D V1.10。封存目录中的 `firmware/c30d-v1.10/` 放置经现场验收的镜像和摘要，
+来自硬件仓库标签 `c30d-fw-v1.10`（`6a09d77`），主机库固定为 `eeb56f7`。
+启动时主机通过 `0x84` 校验车身能力版本 2，车速使用 V1.10 物理单位。
 
-```bash
-roslaunch slicer_bringup ugv.launch hardware_enabled:=false driver_mock:=false \
-  gamepad_enabled:=false start_lio:=true start_perception:=true enable_gnss_receiver:=false
-```
+回退前取消、驻车 Hold、确认实际停稳并退出新栈。V1.9 工程保留在
+`/home/ugv/workspace/slicer/releases/20261125-c30d-front-pwm-v19`。
+回到该发布时配对留存的 V1.9 固件镜像，由底盘负责人执行。用
+`/home/ugv/workspace/slicer/run status` 核对发布，然后沿原现场入口启动。
 
-雷达和投影输出稳定后，从同一 ROS Master 的终端运行
-`rosrun slicer_bringup record_run.py --perception-snapshot`。它自动收尾并保存约 8 秒的
-MID360 点、注册和过滤点云、两级扫描、激光里程计和静态 TF。比较疑似反射件时，固定车位和
-朝向，按变更前后各录一次，记录唯一改变的部件或物体。
+## 开发与排查
 
-## 回退
-
-取消、Hold，确认输出抑制与实际停稳后，退出候选及其 ROS Master。底盘只允许一个串口持有者。
-已有回退入口现场指向 `/home/ugv/workspace/slicer/releases/20261125-c30d-front-pwm-v19`。
-使用 `/home/ugv/workspace/slicer/run status` 校验后，按现场原有启动方式恢复该发布。
-原发布文件和选择路径留在原位置。软件、回放与实车证据见 [迁移与验证记录](MIGRATION.md)。
+- 从新工程根目录运行 `vcs import . < dependencies.repos` 安装固定版本依赖，
+  再运行 `tools/build_candidate.sh -j2` 和 `tools/stage_candidate.sh`。封存步骤会打印发布目录。
+- Mock 可用 `tools/build_candidate.sh --mock-only -j2` 构建。在独立 ROS Master 下从新
+  `install/setup.bash` 加载环境，再运行 `roslaunch slicer_bringup ugv_mock.launch`。
+  同一环境可运行 `rosrun slicer_bringup operator_ui.py`。用 `scenario:=` 选择
+  `preparing`、`path_failure`、`gnss_loss`、`manual_override`、`estop` 或 `stop_unconfirmed`。
+- 静态雷达排查时先断开实体驱动。在独立 ROS Master 启动
+  `roslaunch slicer_bringup ugv.launch start_lio:=true start_perception:=true`。
+  输出稳定后用 `rosrun slicer_bringup record_run.py --perception-snapshot` 录制约 8 秒。
+  对比两次录包时固定车位与朝向。

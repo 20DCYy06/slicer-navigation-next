@@ -1,0 +1,25 @@
+<launch>
+  <arg name="outdoor" default="true"/>
+  <arg name="motion_config" default="$(find slicer_bringup)/config/motion_c30d_v110_field.yaml"/>
+  <arg name="gamepad_device" default=""/>
+  <arg name="gnss_config" default="$(env HOME)/.config/slicer/gnss.yaml"/>
+  <arg name="gnss_serial_device" default="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00"/>
+  <arg name="ntrip" default="$(arg outdoor)"/>
+  <arg name="ntrip_credentials_file" default="$(env HOME)/.config/slicer/ntrip_credentials.json"/>
+  <arg name="um982_gst" default="true"/>
+
+  <include file="$(find slicer_bringup)/launch/ugv.launch">
+    <arg name="hardware_enabled" value="true"/>
+    <arg name="hardware_config" value="$(find slicer_base)/config/c30d_v110.yaml"/>
+    <arg name="motion_config" value="$(arg motion_config)"/>
+    <arg name="gamepad_device" value="$(arg gamepad_device)"/>
+    <arg name="enable_geographic" value="$(arg outdoor)"/>
+    <arg name="enable_gnss_receiver" value="$(arg outdoor)"/>
+    <arg name="enable_gnss_fusion" value="$(arg outdoor)"/>
+    <arg name="gnss_config" value="$(arg gnss_config)"/>
+    <arg name="gnss_serial_device" value="$(arg gnss_serial_device)"/>
+    <arg name="ntrip" value="$(arg ntrip)"/>
+    <arg name="ntrip_credentials_file" value="$(arg ntrip_credentials_file)"/>
+    <arg name="um982_gst" value="$(arg um982_gst)"/>
+  </include>
+</launch>

@@ -31,17 +31,29 @@ stage=$(mktemp -d "$root/releases/.staging-XXXXXXXX")
 trap 'rm -rf -- "$stage"' EXIT
 cp -a install "$stage/install"
 cp -a docs "$stage/docs"
+install -m 0755 tools/run_field.sh "$stage/run"
 /usr/bin/python3 - "$stage" "$revision" <<'PY'
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import yaml
 
 stage, revision = Path(sys.argv[1]), sys.argv[2]
 spec = yaml.safe_load(Path("dependencies.repos").read_text())["repositories"]
+hardware_repo = "deps/slicer_ugv_hardware"
+hardware_revision = spec[hardware_repo]["version"]
+firmware_dir = stage / "firmware/c30d-v1.10"
+firmware_dir.mkdir(parents=True)
+for name in ("firmware.bin", "manifest.json"):
+    artifact = subprocess.check_output([
+        "git", "-C", hardware_repo, "show", f"{hardware_revision}:Firmware/v1.10/bin/{name}",
+    ])
+    (firmware_dir / name).write_bytes(artifact)
+
 configs = {}
 for path in sorted((stage / "install/share").glob("slicer_*/config/*")):
     if path.is_file():
@@ -49,6 +61,7 @@ for path in sorted((stage / "install/share").glob("slicer_*/config/*")):
 record = {
     "source_revision": revision,
     "dependencies": spec,
+    "c30d_firmware_manifest": "firmware/c30d-v1.10/manifest.json",
     "installed_config_sha256": configs,
     "staged_at_utc": datetime.now(timezone.utc).isoformat(),
     "release_class": "field candidate",
