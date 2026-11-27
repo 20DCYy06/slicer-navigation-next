@@ -272,3 +272,10 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 
 - 用正式规划链及模拟传感器，0.20 m/s、两处错开的完整箱体、实时 RTK 融合，A 到 B 共用 135 s。原配置 `b726aef` 越过第一个箱体后以 0.191 m/s 换点，A 返回 `REPLACED`。B 复用配准版本 1，越过第二个箱体，足迹 0 接触，于 135.016 s 返回 `TIMEOUT`，停稳时合成 RTK 距 B 约 1.50 m。证据 `field-data/verification/competition-progression-47Usuo7X/run-DGqeKipC`。
 - 1.70 s 封存候选 `0e44bca` 使用同一速度、几何与任务期限。37.16 s 越过首箱后，以 0.197 m/s 行进换点，A 返回 `REPLACED`。B 复用配准版本 1，并于 69.793 s 返回 `SUCCESS`，确认停稳、合成 RTK 误差 0.1856 m。两箱均越过且 1448 个模拟足迹样本零接触。证据 `field-data/verification/competition-progression-47Usuo7X/run-rjFvLFN4`。
+
+### 已观测直线规划候选
+
+- `2b502f8` 对已观测、全段空闲且满足现有障碍代价及生效净距的直线生成密集采样路径。保留实际起终点与终点姿态，其余情况仍使用原 Dijkstra、路径连续性和平滑。实车第一次正式 WGS84 规划的 5.276 m 栅格回放中，原路径对其起终点连线最大偏差 0.104 m；修订后沿该连线。使用同一栅格插入 0.47 × 0.50 m 箱体，仍生成最大横偏约 0.872 m 的绕行路径。证据 `field-data/verification/field-wgs84-v110-020-scan-retry-281VYQ/straight-replay`。
+- 封存直线规划候选带原 DWA 1.05 s 的闭环模拟使用 6.54 m、0.20 m/s、实时 RTK 融合和 65 s 动作期限。合成车体最大横偏 0.140 m，超时后确认停稳，距终点 0.793 m。证据 `field-data/verification/straight-observed-closed-loop-f0WElE`。
+- `candidate-straight-dwa-170` 的封存候选 `b0633df` 合用直线规划与 1.70 s 预测时长。从封存安装读回 0.20 m/s、1.70 s 和实时 GNSS 融合，44 项单测通过。相同的 6.54 m 模拟和 65 s 期限下，49.489 s 以 `SUCCESS` 停稳到点，合成 RTK 误差 0.1837 m、最大横偏 0.114 m。证据 `field-data/verification/straight-dwa-170-closed-loop-eRTxL4`。该候选待监督实车长直线复测。
+- 同一组合候选在 8.7 m 双箱模拟中，33.54 s 以 0.194 m/s 行进换点，A 返回 `REPLACED`，B 沿用变换版本 1。72.872 s 停稳到点，合成 RTK 误差 0.1729 m，两箱均越过且 1524 个模拟足迹样本零接触。继续使用 135 s 的原模拟期限。证据 `field-data/verification/competition-progression-47Usuo7X/run-VUIoUVKG`。
