@@ -39,4 +39,4 @@ release_dir=$(tools/stage_candidate.sh)
 
 `main` 以交付候选 `94ecf19` 为基线。`37c2033` 到 `94ecf19` 只更新了 `docs/MIGRATION.md`，车端代码与配置一致。
 
-`performance/wgs84-dwa-170` 保留封存候选 `b0633df`。性能调试在新仓库进行，实车从候选自身的 `run` 启动。先用 V1.10、0.20 m/s、开启实时 RTK 融合完成 5～10 米 WGS84 到点，再验证复杂绕障、行进换点和逐档提速。通过实车验证后将性能改动合入 `main`。
+`performance/wgs84-dwa-170` 保留封存候选 `b0633df`。0.20 m/s 长直线 WGS84、双挡板和行进换点均有[实车验收记录](docs/MIGRATION.md)，对应规划改动进入 `main`。后续提速在独立候选验证，实车从候选自身的 `run` 启动。
