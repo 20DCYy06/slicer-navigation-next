@@ -41,7 +41,8 @@ if [[ "$role" == vision ]]; then
         printf 'Vision install unavailable: %s\n' "$grasp" >&2
         exit 1
     fi
-    source "$grasp/setup.bash"
+    # Load the vision package without its build-time navigation underlay.
+    source "$grasp/setup.bash" --local
     source "$release/install/setup.bash" --extend
 else
     source "$release/install/setup.bash"

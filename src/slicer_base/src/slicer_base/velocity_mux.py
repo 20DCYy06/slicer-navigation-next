@@ -14,7 +14,7 @@ class VelocityMux:
         self.timeout = timeout
         # A previous process's authority requests remain stale after a restart.
         self.epoch = randbits(48)
-        self.held = True
+        self.held = False
         self.manual = False
         self.estop = False
         self.online = False

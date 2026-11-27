@@ -59,6 +59,7 @@ class GeographicPlant(Plant):
 def geographic_goal(east_m):
     return NavigateToPointGoal(mode=NavigateToPointGoal.WGS84,
                                latitude_deg=0.0, longitude_deg=math.degrees(east_m / EARTH_EAST_M),
+                               has_yaw=True, yaw_enu_rad=math.pi,
                                timeout=rospy.Duration(40), require_geographic_verification=True)
 
 
@@ -111,8 +112,10 @@ def check(plant):
     assert result.code == NavigateToPointResult.SUCCESS, result
     assert result.stop_valid and result.stopped and result.position_error_valid, result
     assert result.error_source == "gnss_xy", result
+    assert not result.yaw_error_valid, result
     assert any(value.projected_target_valid and value.transform_version == 1 for value in feedback)
     assert math.hypot(plant.x - 2.65, plant.y) < 0.30, (plant.x, plant.y)
+    assert abs(plant.yaw) < 0.30, plant.yaw
     wait_for(lambda: snapshots[-1].wgs84_valid and snapshots[-1].yaw_enu_valid)
     geographic = snapshots[-1]
     assert geographic.wgs84_stamp in tuple(plant.source_stamps), geographic

@@ -123,6 +123,16 @@ def main():
     assert release().accepted, "simulated release rejected"
     wait_for(lambda: not status[-1].hold)
 
+    nearby_goal = goal(0.15)
+    nearby_goal.local_target.pose.orientation.z = 1.0
+    nearby_goal.local_target.pose.orientation.w = 0.0
+    nearby = client.send_goal(nearby_goal)
+    wait_for(nearby.get_result)
+    result = nearby.get_result()
+    assert result.code == NavigateToPointResult.SUCCESS and result.stop_valid and result.stopped, result
+    assert result.position_error_valid and result.position_error_m <= 0.20 and not result.yaw_error_valid, result
+    assert simulated.motion_count == 0, "nearby position-only goal commanded motion"
+
     initial = client.send_goal(goal(1.0))
     wait_for(lambda: initial.get_goal_status() == GoalStatus.ACTIVE or initial.get_result())
     assert initial.get_result() is None, initial.get_result()

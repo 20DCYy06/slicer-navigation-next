@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """End-to-end public API test on a dedicated mock ROS master."""
+from pathlib import Path
+import subprocess
+import sys
 import time
 
 import actionlib
@@ -34,17 +37,10 @@ def main():
     status = []
     rospy.Subscriber("/ugv/status", UgvStatus, lambda msg: status.append(msg), queue_size=1)
     wait_for(lambda: status)
-    assert status[-1].hold and status[-1].active_velocity_source == "zero"
+    assert status[-1].base_online and not status[-1].hold
+    assert status[-1].active_velocity_source == "zero"
     hold = rospy.ServiceProxy("/ugv/control/hold", Control)
     release = rospy.ServiceProxy("/ugv/control/release", Control)
-    locked = client.send_goal(new_goal())
-    wait_for(locked.get_result)
-    locked_result = locked.get_result()
-    assert locked.get_goal_status() == GoalStatus.ABORTED
-    assert locked_result.code == NavigateToPointResult.HELD and not locked_result.stop_commanded
-    assert locked_result.stop_valid and locked_result.stopped
-    assert release().accepted
-    wait_for(lambda: not status[-1].hold)
     first = client.send_goal(new_goal())
     wait_for(lambda: first.get_goal_status() == GoalStatus.ACTIVE)
     bad = client.send_goal(new_goal("old_frame"))
@@ -67,6 +63,17 @@ def main():
     assert end_stamp != rospy.Time()
     wait_for(lambda: status[-1].header.stamp > end_stamp)
     assert status[-1].last_result_stamp == end_stamp
+    quiescing = client.send_goal(new_goal())
+    wait_for(lambda: status[-1].active_velocity_source == "nav")
+    quiesce_script = Path(__file__).resolve().parents[1] / "src/slicer_bringup/scripts/quiesce_node.py"
+    subprocess.run([sys.executable, str(quiesce_script), "--no-hold"], check=True, timeout=12)
+    wait_for(quiescing.get_result)
+    assert quiescing.get_goal_status() == GoalStatus.PREEMPTED
+    result = quiescing.get_result()
+    assert result.code == NavigateToPointResult.CANCELED and result.stop_valid and result.stopped
+    wait_for(lambda: status[-1].active_velocity_source == "zero" and not status[-1].goal_id)
+    assert not status[-1].hold
+
     holding = client.send_goal(new_goal())
     wait_for(lambda: status[-1].active_velocity_source == "nav")
     assert hold().accepted
@@ -74,7 +81,13 @@ def main():
     held_result = holding.get_result()
     assert holding.get_goal_status() == GoalStatus.ABORTED
     assert held_result.code == NavigateToPointResult.HELD and not held_result.stop_commanded
-    wait_for(lambda: status[-1].hold)
+    wait_for(lambda: status[-1].hold and status[-1].stop_valid and status[-1].stopped)
+    locked = client.send_goal(new_goal())
+    wait_for(locked.get_result)
+    locked_result = locked.get_result()
+    assert locked.get_goal_status() == GoalStatus.ABORTED
+    assert locked_result.code == NavigateToPointResult.HELD and not locked_result.stop_commanded
+    assert locked_result.stop_valid and locked_result.stopped
     assert release().accepted
     wait_for(lambda: not status[-1].hold and not status[-1].goal_id)
 

@@ -13,8 +13,8 @@ ROS1 Noetic。导航、视觉与 BT 统一使用 `slicer_interfaces` **1.0.0**�
 
 ## 导航目标和状态
 
-- 本地目标 `LOCAL_POSE=1` 使用 `local_target`，参考系为 `map`，单位为米。时间戳可填零或近 5 秒内的 ROS 时间。`has_yaw=true` 时从四元数读航向。
-- 地理目标 `WGS84=2` 使用十进制度经纬度，表示 `base_link` 原点的地面停车点。可选椭球高单位为米，可选 `yaw_enu_rad` 从正东起逆时针计。`require_geographic_verification=true` 时做本次停稳 RTK 到点复核。
+- 本地目标 `LOCAL_POSE=1` 使用 `local_target`，参考系为 `map`，单位为米。时间戳可填零或近 5 秒内的 ROS 时间。RViz 2D Nav Goal 按位置停稳。独立 Action 客户端显式设 `has_yaw=true` 时从四元数读航向。
+- 地理目标 `WGS84=2` 使用十进制度经纬度，表示 `base_link` 原点的地面停车点。可选椭球高单位为米。保留 `has_yaw` 和 `yaw_enu_rad` 字段，地理导航按位置停稳。`require_geographic_verification=true` 时用新鲜的停稳 RTK 观测复核位置误差。
 - `xy_tolerance_m`、`yaw_tolerance_rad`、`timeout` 填零时默认分别为 0.20 m、0.30 rad、120 s。反馈含 GoalID、阶段、剩余距离、速度与目标投影。有有效位时才使用对应数据，投影的 `transform_version` 表示其配准版本。`gnss_stamp` 为接收机适配节点的 ROS 接收时间，`gnss_received_stamp` 为导航侧收到该观测的 ROS 时间。
 - 合法新导航目标可替换旧目标。用各自 GoalHandle 取消，旧取消不会撤销新目标。格式无效的目标走 `REJECTED`，格式有效但受控制锁阻止的目标走 `ABORTED` 并返回相应原因。客户端断连时从 `/ugv/status` 核对当前任务和停稳。
 - `stop_commanded=true` 表示导航自身发起的目标停止请求已收到确认。外部 Hold、急停、人工或任务速度源接管通过错误码报告，停车有效位使用事件后的实测反馈。`stop_valid=true` 后再看 `stopped`，接管者仍在行驶时可报告有效但未停稳。`REPLACED` 表示目标已交接。误差仅在对应有效位为真时使用。
@@ -44,7 +44,7 @@ ROS1 Noetic。导航、视觉与 BT 统一使用 `slicer_interfaces` **1.0.0**�
 
 ## 抓取与控制权交接
 
-1. 导航到点，或取消导航并等待终态和实测停稳。发抓取目标前确认底盘在线、无人接管、Release 生效且没有活动导航目标。逐个发送抓取或释放目标。
+1. 导航到点，或取消导航并等待终态和实测停稳。发抓取目标前确认底盘在线、无人接管、`hold=false` 且没有活动导航目标。逐个发送抓取或释放目标。
 2. 视觉节点通过 `/ugv/cmd_vel/mission` 和 `/ugv/actuators/servo` 接管任务动作。底盘驱动、Mux 和 Guard 在整个过程中保持运行。`PICK` 成功时 `needs_release=true` 表示保留吸附。失败或取消且 `needs_release=true` 时先处理持物或恢复，再决定后续动作。
 3. 视觉任务结束时清零并退出任务速度流。继续导航前等待新鲜的 `/ugv/status` 显示 `stop_valid=true`、`stopped=true`、`active_velocity_source=zero`，且 `goal_id`、`nav_goal_id` 为空。收到导航的 `STOP_NOT_CONFIRMED` 或缺失结果时，先核对车辆和任务状态。
 
@@ -65,13 +65,13 @@ source install/setup.bash
 组合示例按顺序执行导航到点、抓取、在同一地点释放、确认底盘空闲停稳及继续导航。现场用事先确认的两组 `map` 坐标。执行需要车端已处于 Release 状态，由一个任务执行流负责。
 
 ```bash
-source /path/to/slicer-visual-grasp/install/setup.bash
+source /path/to/slicer-visual-grasp/install/setup.bash --local
 source install/setup.bash --extend
 /usr/bin/python3 docs/examples/nav_grasp_nav.py "$PICK_X" "$PICK_Y" "$NEXT_X" "$NEXT_Y"
 ```
 
 两个示例以 JSON 输出终态，Ctrl+C 仅取消当前调用的 GoalHandle。组合示例在失败、超时或未确认停稳时停止流程，并在视觉终态保留 `needs_release`。
 
-在独立 ROS Master 下用 `roslaunch slicer_bringup ugv_mock.launch` 联调导航。组合示例须加载视觉安装环境，再以 `vision:=true` 启动 Mock。Mock 默认 Hold，运行示例前调用 `rosservice call /ugv/control/release '{}'`。Mock 的地理位置和 ENU 航向有效位保持为假。
+在独立 ROS Master 下用 `roslaunch slicer_bringup ugv_mock.launch` 联调导航。组合示例须加载视觉安装环境，再以 `vision:=true` 启动 Mock。Mock 默认非 Hold，地理位置和 ENU 航向有效位保持为假。
 
 Mock 可在运行中设置 `/ugv_mock/fault`，例如 `rosparam set /ugv_mock/fault gnss_loss`。支持 `none`、`hold`、`estop`、`manual_override`、`base_fault`、`gnss_loss`、`path_failure`、`stop_unconfirmed`。用 `none` 清除故障，再按需要显式 Release。该入口仅用于 BT 软件测试。

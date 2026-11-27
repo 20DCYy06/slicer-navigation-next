@@ -1,4 +1,5 @@
 #include <slicer_navigation/start_heading.h>
+#include <slicer_navigation/field_commitment.h>
 #include <slicer_navigation/PlannerVelocity.h>
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 
 #include <angles/angles.h>
 #include <base_local_planner/goal_functions.h>
@@ -15,6 +17,7 @@
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <pluginlib/class_list_macros.h>
+#include <ros/param.h>
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
@@ -28,25 +31,27 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
     tf_ = tf;
     costmap_ = costmap;
     ros::NodeHandle nh("~/" + name);
-    double rate, tolerance, settle, timeout, kp, kd;
+    xy_tolerance_param_ = nh.resolveName("xy_goal_tolerance");
+    yaw_tolerance_param_ = nh.resolveName("yaw_goal_tolerance");
+    double rate, settle, timeout, kp, kd;
     nh.param("start_heading_rate", rate, .45);
-    nh.param("start_heading_tolerance", tolerance, .12);
+    nh.param("start_heading_tolerance", tolerance_, .12);
     nh.param("start_heading_settle", settle, .25);
     nh.param("start_heading_timeout", timeout, 16.);
     nh.param("start_heading_min_distance", min_distance_, .20);
     nh.param("start_heading_lookahead", lookahead_, 1.35);
     nh.param("start_heading_kp", kp, 1.6);
     nh.param("start_heading_kd", kd, .25);
-    for (double value : {rate, tolerance, settle, timeout, min_distance_, lookahead_, kp, kd})
+    for (double value : {rate, tolerance_, settle, timeout, min_distance_, lookahead_, kp, kd})
       if (!std::isfinite(value) || value <= 0.)
         throw std::invalid_argument("start heading parameters must be positive and finite");
-    if (lookahead_ < 1.2 || lookahead_ > 1.5 || tolerance >= 10.*kHeadingPi/180.)
+    if (lookahead_ < 1.2 || lookahead_ > 1.5 || tolerance_ >= 10.*kHeadingPi/180.)
       throw std::invalid_argument("start heading expects 1.2–1.5 m lookahead and tolerance below 10 degrees");
     double angular_limit;
     nh.param("max_vel_theta", angular_limit, rate);
     nh.param("trans_stopped_vel", trans_stopped_vel_, .025);
     nh.param("theta_stopped_vel", theta_stopped_vel_, .06);
-    heading_.reset(new StartHeading(std::min(rate, angular_limit), tolerance, settle, timeout, kp, kd));
+    heading_.reset(new StartHeading(std::min(rate, angular_limit), tolerance_, settle, timeout, kp, kd));
     nh.param("goal_approach_decel", approach_decel_, .60);
     nh.param("goal_approach_response", approach_response_, .25);
     if (!std::isfinite(approach_decel_) || approach_decel_ <= 0. ||
@@ -70,10 +75,14 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
       goal_ = target;
       has_goal_ = true;
       clearAlignment();
+      readPositionOnlyTolerance();
+      task_axis_.reset(point(plan.front()), point(target));
     }
-    if (aligned_ && !heading_lock_.active()) return delegate_.setPlan(plan);
-    // Keep the first accepted path in DWA through alignment and initial travel.
-    // Save only the newest replan for the handoff.
+    if (aligned_) return delegate_.setPlan(plan);
+    std::vector<Point2> route;
+    route.reserve(plan.size());
+    for (const auto& pose : plan) route.push_back(point(pose));
+    pending_side_ = task_axis_.classify(route);
     pending_plan_ = plan;
     return true;
   }
@@ -95,21 +104,28 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   bool computeCommand(geometry_msgs::Twist& command) {
     command = geometry_msgs::Twist();
     if (!currentGoalMatchesPlan()) return true;
-    if (aligned_ && !heading_lock_.active()) return cruise(command);
+    if (aligned_) return cruise(command);
+    if (pending_plan_.empty()) return false;
     geometry_msgs::PoseStamped robot;
-    if (!has_goal_ || !costmap_->getRobotPose(robot)) return false;
+    if (!costmap_->getRobotPose(robot)) return false;
+    const double distance = distanceToGoal(robot);
+    if (!std::isfinite(distance)) return false;
+    if (distance <= min_distance_) {
+      if (!usePendingPlan()) return false;
+      aligned_ = true;
+      return cruise(command);
+    }
 
     const auto now = ros::WallTime::now().toSec();
-    if (!heading_lock_.active()) {
-      if (pending_plan_.empty()) return false;
-      const double distance = distanceToGoal(robot);
-      if (!std::isfinite(distance)) return false;
-      if (distance <= min_distance_) {
-        if (!usePendingPlan()) return false;
-        aligned_ = true;
-        return cruise(command);
-      }
-      if (!acquireHeading(robot, now)) return false;
+    if (!std::isfinite(bearing_)) {
+      HeadingReference reference;
+      if (!readHeadingReference(robot, reference)) return false;
+      acquireHeading(std::move(reference), now);
+    } else if (sideChanged() || prefixBlocked(heading_prefix_)) {
+      // Zero before turning toward a new side or a replacement path.
+      bearing_ = std::numeric_limits<double>::quiet_NaN();
+      heading_prefix_.clear();
+      return true;
     }
 
     const auto odom = freshOdometry();
@@ -117,29 +133,11 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
       ROS_WARN_THROTTLE(2., "RTK start heading needs fresh odometry");
       return false;
     }
-    const auto& odom_pose = odom->pose.pose;
-    const HeadingPoint odom_position{odom_pose.position.x, odom_pose.position.y};
-    const bool finite_position = std::isfinite(odom_position.first) && std::isfinite(odom_position.second);
-    if (aligned_) {
-      if (!finite_position || odom->header.frame_id != forward_odom_frame_) return false;
-      if (heading_lock_.travelledForward(odom_position, .5)) {
-        if (!usePendingPlan()) return false;
-        heading_lock_.clear();
-        ROS_INFO("RTK start heading released after 0.50 m of forward odometry");
-        return cruise(command);
-      }
-    }
-    if (hardObstacleAhead(robot, heading_lock_.yaw())) {
-      ROS_WARN("RTK start heading released for a hard obstacle within 1.50 m; waiting for a new plan");
-      clearAlignment();
-      return true;  // Publish zero before any replacement alignment.
-    }
-    if (aligned_) return cruise(command);
-
     const auto& twist = odom->twist.twist;
     const bool stopped = std::hypot(twist.linear.x, twist.linear.y) <= trans_stopped_vel_ &&
                          std::abs(twist.angular.z) <= theta_stopped_vel_;
-    const double error = angles::shortest_angular_distance(tf2::getYaw(robot.pose.orientation), heading_lock_.yaw());
+    const double robot_yaw = tf2::getYaw(robot.pose.orientation);
+    const double error = angles::shortest_angular_distance(robot_yaw, bearing_);
     if (!std::isfinite(error) || !std::isfinite(twist.angular.z)) return false;
     const auto step = heading_->update(error, twist.angular.z, stopped, now);
     if (step.failed) {
@@ -148,10 +146,21 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
     }
     command.angular.z = step.angular;
     if (step.ready) {
-      const double odom_yaw = tf2::getYaw(odom_pose.orientation);
-      if (odom->header.frame_id.empty() || !std::isfinite(odom_yaw) || !finite_position) return false;
-      heading_lock_.beginForward(odom_position, odom_yaw);
-      forward_odom_frame_ = odom->header.frame_id;
+      HeadingReference latest;
+      if (!readHeadingReference(robot, latest)) {
+        bearing_ = std::numeric_limits<double>::quiet_NaN();
+        heading_prefix_.clear();
+        return false;
+      }
+      // The buffered same-side path may have moved while the vehicle turned.
+      // Complete the alignment against that path before sending it to DWA.
+      if (std::abs(angles::shortest_angular_distance(robot_yaw, latest.yaw)) > tolerance_) {
+        acquireHeading(std::move(latest), now);
+        return true;
+      }
+      if (!usePendingPlan()) return false;
+      heading_prefix_.clear();
+      ROS_INFO("RTK start heading settled; handed the latest path to DWA");
       aligned_ = true;
     }
     return true;
@@ -159,13 +168,28 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
 
  public:
   bool isGoalReached() override {
-    if (!currentGoalMatchesPlan() || !aligned_ || !delegate_.isGoalReached()) return false;
+    if (!currentGoalMatchesPlan()) return false;
+    geometry_msgs::PoseStamped robot;
+    const bool position_reached = position_only_tolerance_ > 0. &&
+        costmap_->getRobotPose(robot) && distanceToGoal(robot) <= position_only_tolerance_;
+    if (!position_reached && (!aligned_ || !delegate_.isGoalReached())) return false;
     has_goal_ = false;
     clearAlignment();
     return true;
   }
 
  private:
+  void readPositionOnlyTolerance() {
+    // Goal submission follows dynamic reconfigure. Read the committed values
+    // once per stamped goal so a replacement cannot inherit an old tolerance.
+    position_only_tolerance_ = 0.;
+    double yaw, xy;
+    if (ros::param::get(yaw_tolerance_param_, yaw) && std::isfinite(yaw) && yaw > kHeadingPi &&
+        ros::param::get(xy_tolerance_param_, xy) && std::isfinite(xy) && xy > 0.) {
+      position_only_tolerance_ = xy;
+    }
+  }
+
   bool usePendingPlan() {
     if (pending_plan_.empty()) return true;
     if (!delegate_.setPlan(pending_plan_)) return false;
@@ -174,56 +198,81 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   }
 
   void clearAlignment() {
-    heading_lock_.clear();
+    bearing_ = std::numeric_limits<double>::quiet_NaN();
+    heading_prefix_.clear();
+    pending_side_ = heading_side_ = 0;
     aligned_ = false;
     pending_plan_.clear();
     last_drive_ = geometry_msgs::Twist();
     last_forward_output_ = 0.;
   }
 
-  bool acquireHeading(const geometry_msgs::PoseStamped& robot, double now) {
+  struct HeadingReference {
+    double yaw = std::numeric_limits<double>::quiet_NaN();
+    std::vector<HeadingPoint> prefix;
     std::vector<geometry_msgs::PoseStamped> local_path;
+  };
+
+  static Point2 point(const geometry_msgs::PoseStamped& pose) {
+    return {pose.pose.position.x, pose.pose.position.y};
+  }
+
+  bool sideChanged() const {
+    return heading_side_ && pending_side_ == -heading_side_;
+  }
+
+  bool readHeadingReference(const geometry_msgs::PoseStamped& robot, HeadingReference& reference) {
     if (!base_local_planner::transformGlobalPlan(*tf_, pending_plan_, robot, *costmap_->getCostmap(),
-            costmap_->getGlobalFrameID(), local_path)) return false;
+            costmap_->getGlobalFrameID(), reference.local_path)) return false;
     const auto& position = robot.pose.position;
-    const double yaw = pathLookaheadChord(local_path.begin(), local_path.end(), [](const auto& pose) {
-        return HeadingPoint{pose.pose.position.x, pose.pose.position.y};
-      }, {position.x, position.y}, lookahead_);
-    if (!std::isfinite(yaw)) {
+    reference.yaw = pathLookaheadChord(reference.local_path.begin(), reference.local_path.end(),
+        [](const auto& pose) { return HeadingPoint{pose.pose.position.x, pose.pose.position.y}; },
+        {position.x, position.y}, lookahead_, [&](HeadingPoint sample) {
+          reference.prefix.emplace_back(position.x + sample.first, position.y + sample.second);
+        });
+    if (!std::isfinite(reference.yaw)) {
       ROS_WARN_THROTTLE(2., "RTK start heading needs a local lookahead chord");
       return false;
     }
-    if (hardObstacleAhead(robot, yaw)) {
-      ROS_WARN_THROTTLE(2., "RTK start heading candidate has a hard obstacle within 1.50 m");
+    if (prefixBlocked(reference.prefix)) {
+      ROS_WARN_THROTTLE(2., "RTK start heading path prefix intersects a hard obstacle");
       return false;
     }
-    if (!usePendingPlan()) return false;
-    heading_lock_.acquire(yaw);
-    heading_->start(now);
-    nav_msgs::Path preview;
-    preview.header = robot.header;
-    preview.poses = std::move(local_path);
-    local_plan_preview_.publish(preview);
-    const double robot_yaw = tf2::getYaw(robot.pose.orientation);
-    ROS_INFO("RTK start heading locked: current %.3f, %.2f m chord %.3f, error %.3f rad",
-             robot_yaw, lookahead_, yaw, angles::shortest_angular_distance(robot_yaw, yaw));
     return true;
   }
 
-  bool hardObstacleAhead(const geometry_msgs::PoseStamped& robot, double yaw) const {
+  void acquireHeading(HeadingReference reference, double now) {
+    bearing_ = reference.yaw;
+    heading_side_ = pending_side_;
+    heading_prefix_ = std::move(reference.prefix);
+    heading_->start(now);
+    nav_msgs::Path preview;
+    preview.header = reference.local_path.front().header;
+    preview.header.stamp = ros::Time::now();
+    preview.poses = std::move(reference.local_path);
+    local_plan_preview_.publish(preview);
+    ROS_INFO("RTK start heading selected from %.2f m of path: %.3f rad", lookahead_, bearing_);
+  }
+
+  bool prefixBlocked(const std::vector<HeadingPoint>& prefix) const {
     auto* grid = costmap_->getCostmap();
     std::lock_guard<costmap_2d::Costmap2D::mutex_t> lock(*grid->getMutex());
-    const auto& position = robot.pose.position;
-    return headingCorridorBlocked({position.x, position.y}, yaw, 1.5, grid->getResolution() / 2.,
-        [&](double x, double y) {
-          unsigned mx, my;
-          if (!grid->worldToMap(x, y, mx, my)) return false;
-          const auto cost = grid->getCost(mx, my);
-          // Unknown and ordinary inflation never pick a different turn.
-          // The downstream Guard still checks the actual footprint sweep.
-          return cost == costmap_2d::LETHAL_OBSTACLE ||
-                 cost == costmap_2d::INSCRIBED_INFLATED_OBSTACLE;
-        });
+    const double step = grid->getResolution() * .5;
+    for (size_t i = 1; i < prefix.size(); ++i) {
+      const auto& from = prefix[i-1];
+      const double dx = prefix[i].first - from.first;
+      const double dy = prefix[i].second - from.second;
+      const int steps = std::max(1, static_cast<int>(std::ceil(std::hypot(dx, dy) / step)));
+      for (int n = 1; n <= steps; ++n) {
+        const double fraction = static_cast<double>(n) / steps;
+        unsigned x, y;
+        if (!grid->worldToMap(from.first + fraction*dx, from.second + fraction*dy, x, y)) continue;
+        const auto cost = grid->getCost(x, y);
+        if (cost == costmap_2d::LETHAL_OBSTACLE || cost == costmap_2d::INSCRIBED_INFLATED_OBSTACLE)
+          return true;
+      }
+    }
+    return false;
   }
 
   nav_msgs::Odometry::ConstPtr freshOdometry() {
@@ -334,14 +383,18 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   ros::WallTime last_drive_at_;
   double last_forward_output_ = 0.;
 
-  AlignmentHeadingLock heading_lock_;
+  SideHysteresis task_axis_;
+  std::vector<HeadingPoint> heading_prefix_;
   std::vector<geometry_msgs::PoseStamped> pending_plan_;
+  double bearing_ = std::numeric_limits<double>::quiet_NaN();
+  int pending_side_ = 0, heading_side_ = 0;
   ros::Publisher command_pub_;
   double trans_stopped_vel_ = .025, theta_stopped_vel_ = .06;
-  std::string forward_odom_frame_;
   std::mutex goal_lock_;
   geometry_msgs::PoseStamped::ConstPtr current_goal_;
-  double min_distance_ = .2, lookahead_ = 1.35;
+  std::string xy_tolerance_param_, yaw_tolerance_param_;
+  double position_only_tolerance_ = 0.;
+  double min_distance_ = .2, lookahead_ = 1.35, tolerance_ = .12;
   double approach_decel_ = .60, approach_response_ = .25;
   bool has_goal_ = false, aligned_ = false;
 };

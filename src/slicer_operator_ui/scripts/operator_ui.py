@@ -8,22 +8,22 @@ from queue import Empty, SimpleQueue
 import signal
 import subprocess
 import sys
-from threading import Event, Thread
+from threading import Thread
 import time
 
 import actionlib
 from actionlib_msgs.msg import GoalStatus, GoalStatusArray
 from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
 from PyQt5 import QtCore, QtWidgets
 import rospy
-from sensor_msgs.msg import NavSatFix, NavSatStatus
+from sensor_msgs.msg import LaserScan, NavSatFix, NavSatStatus
 
 from slicer_interfaces.msg import (
     NavigateToPointAction, NavigateToPointActionFeedback, NavigateToPointFeedback as Feedback,
     NavigateToPointGoal as Goal, NavigateToPointResult as Result, UgvStatus,
 )
-from slicer_interfaces.srv import Control
 from slicer_operator_ui.map_panel import MapPanel
 from slicer_operator_ui.services import ServicePanel
 
@@ -38,6 +38,7 @@ PHASES = {
     Feedback.NAVIGATING: "行驶中", Feedback.VERIFYING: "确认到点", Feedback.STOPPING: "正在停车",
 }
 FIX = {0: "未知", 1: "单点", 2: "Float", 3: "Fixed"}
+RECEIVER_FIX = {"single": "单点", "differential": "差分", "PPS": "PPS", "RTK float": "Float", "RTK fixed": "Fixed"}
 ALIGNMENT = {0: "未配准", 1: "退化", 2: "可用"}
 RESULT_NAMES = {
     Result.SUCCESS: "已到达", Result.CANCELED: "已取消", Result.REPLACED: "已换目标",
@@ -80,30 +81,25 @@ def fresh(stamp, limit=0.5):
     return not stamp.is_zero() and 0 <= (rospy.Time.now() - stamp).to_sec() <= limit
 
 
-class Departure:
-    def __init__(self, goal, epoch):
-        self.goal = goal
-        self.epoch = epoch
-        self.requested_at = rospy.Time.now()
-        self.deadline = time.monotonic() + 2.0
-        self.acknowledged = False
-        self.canceled = Event()
+def action_transport_ready(client):
+    if client is None:
+        return False
+    transport = client.action_client
+    return all(link.get_num_connections() for link in (
+        transport.pub_goal, transport.pub_cancel, transport.result_sub, transport.feedback_sub,
+    ))
 
 
-def target(mode, first, second, altitude, yaw, verify):
+def target(mode, first, second, altitude, verify):
     coordinates = tuple(float(value) for value in (first, second))
     if not all(map(math.isfinite, coordinates)):
         raise ValueError("坐标必须为有限数值")
-    angle = float(yaw) if yaw.strip() else None
-    if angle is not None and not -math.pi <= angle <= math.pi:
-        raise ValueError("航向应在 ±π rad 内")
-    goal = Goal(has_yaw=angle is not None)
+    goal = Goal()
     if mode == "本地 map":
         goal.mode = Goal.LOCAL_POSE
         goal.local_target.header.frame_id = "map"
         goal.local_target.pose.position.x, goal.local_target.pose.position.y = coordinates
-        goal.local_target.pose.orientation.z = math.sin((angle or 0.0) / 2.0)
-        goal.local_target.pose.orientation.w = math.cos((angle or 0.0) / 2.0)
+        goal.local_target.pose.orientation.w = 1.0
         return goal, f"目标 X {coordinates[0]:.3f} m，Y {coordinates[1]:.3f} m"
     latitude, longitude = coordinates
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
@@ -111,7 +107,6 @@ def target(mode, first, second, altitude, yaw, verify):
     goal.mode = Goal.WGS84
     goal.latitude_deg, goal.longitude_deg = coordinates
     goal.require_geographic_verification = verify
-    goal.yaw_enu_rad = angle or 0.0
     if altitude.strip():
         goal.altitude_ellipsoid_m = float(altitude)
         if not math.isfinite(goal.altitude_ellipsoid_m):
@@ -122,27 +117,50 @@ def target(mode, first, second, altitude, yaw, verify):
 
 
 STYLE = """
-QWidget { color: #e6f2f7; background: #101d27; font-size: 15px; }
-QFrame[readout="true"] { background: #192d3a; border: 1px solid #345467; border-radius: 8px; }
-QFrame[readout="true"] QLabel { background: transparent; }
+QWidget { color: #e6f2f7; background: #16212d; font-size: 14px; }
+QWidget#OperatorSidebar, QWidget#OperatorSidebarContent { background: #edf0f2; }
+QScrollArea#LiveReadouts, QWidget#ReadoutCard { background: #182635; border-radius: 6px; }
+QWidget#ReadoutCard QLabel { background: transparent; font-size: 13px; }
+QLabel#RtkHeadline { background: transparent; color: #804b15; font-size: 16px; font-weight: 600; }
+QLabel#RtkHeadline[tone="ok"] { color: #16654c; }
+QLabel#RtkHeadline[tone="stop"] { color: #a02e45; }
+QLabel#RtkFreshness, QLabel#OperatorNotice { background: transparent; color: #354b59; }
 QLabel[muted="true"] { color: #a7c1d0; font-size: 13px; }
-QLabel#SectionTitle { font-size: 17px; font-weight: 600; }
 QLabel[tone="ok"] { color: #83e6b3; }
 QLabel[tone="warn"] { color: #ffd488; }
 QLabel[tone="stop"] { color: #ff9d9c; }
 QPushButton, QComboBox, QLineEdit {
-    min-height: 36px; padding: 0px 8px; border: 1px solid #395b70;
-    border-radius: 6px; background: #203848;
+    min-height: 26px; padding: 0px 7px; border: 1px solid #395b70;
+    border-radius: 4px; background: #203848;
 }
 QPushButton:hover, QPushButton:checked { background: #2d566d; }
-QPushButton[primary="true"] { background: #82d5e9; color: #10242e; font-weight: 600; }
-QPushButton[parking="true"] { border: 1px solid #ae6871; color: #ffc2bd; }
 QPushButton:disabled { background: #172630; color: #7d94a0; border-color: #293c47; }
+QPushButton#TaskAction { background: #85283e; border-color: #b46576; font-weight: 600; }
+QPushButton#TaskAction:hover { background: #a0344f; }
+QPushButton#TaskAction:disabled { background: #592735; color: #d6aeb9; }
+QPushButton#TaskAction[running="true"] { background: #157455; border-color: #62b797; color: #eafff6; }
+QPushButton#TaskAction[running="true"]:hover { background: #1c8f69; }
 QLineEdit:disabled, QCheckBox:disabled { color: #8499a4; }
-QTabBar::tab { min-height: 38px; padding: 0px 12px; background: #1a2e3b; }
+QTabBar::tab { min-height: 26px; padding: 0px 12px; background: #1a2e3b; }
 QTabBar::tab:selected { background: #2b4f62; border-bottom: 2px solid #82d5e9; }
-QTabWidget::pane { border: 1px solid #395366; border-radius: 5px; }
+QTabWidget::pane { border: 1px solid #395366; border-radius: 4px; }
 QPlainTextEdit { background: #12242f; border: 1px solid #395366; color: #cae2ee; }
+QWidget#ServicePanel, QLabel#WorkflowState, QLabel#WorkflowAircraft, QToolButton#ServiceDiagnostics {
+    background: transparent; color: #354b59;
+}
+QPushButton#WorkflowAction, QPushButton#WorkflowStop {
+    min-height: 22px; text-align: left; background: #542d3d; border-color: #745567;
+}
+QPushButton#WorkflowAction:hover, QPushButton#WorkflowStop:hover { background: #734052; }
+QPushButton#WorkflowAction:disabled, QPushButton#WorkflowStop:disabled { background: #dce1e7; color: #526776; }
+QLabel#WorkflowState[state="active"] { color: #16654c; }
+QLabel#WorkflowState[state="activating"], QLabel#WorkflowState[state="deactivating"] { color: #804b15; }
+QLabel#WorkflowState[state="failed"] { color: #a02e45; }
+QWidget#TargetForm QComboBox, QWidget#TargetForm QLineEdit { min-height: 22px; }
+QScrollBar:vertical { background: #263844; width: 8px; margin: 0; }
+QScrollBar::handle:vertical { background: #8295a0; min-height: 18px; border-radius: 3px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
 """
 
 
@@ -166,6 +184,13 @@ def button(label, callback, grid, row, column, span=1):
     widget.clicked.connect(callback)
     grid.addWidget(widget, row, column, 1, span)
     return widget
+
+
+def task_running(widget, running):
+    if widget.property("running") != running:
+        widget.setProperty("running", running)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
 
 
 def stop_label(valid, stopped):
@@ -201,61 +226,107 @@ def progress_text(feedback):
 class GraspPanel(QtWidgets.QWidget):
     busy_states = {GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.PREEMPTING, GoalStatus.RECALLING}
 
-    def __init__(self, events):
+    def __init__(self, events, start_service):
         super().__init__()
         self.events = events
-        self.client = None
-        self.server_status = None
-        self.active = False
-        self.cancel_pending = False
+        self.start_service = start_service
+        self.client = self.server_status = None
+        self.selected_button = self.command = self.start_deadline = None
+        self.cancel_pending = self.base_ready = False
         layout = QtWidgets.QGridLayout(self)
         self.state = message("等待视觉服务" if GraspAction else "视觉功能未安装")
         self.details = message()
         layout.addWidget(self.state, 0, 0, 1, 2)
-        self.pick_button = button("抓取", lambda: self.send(self.pick_button, GraspGoal.PICK), layout, 1, 0)
-        self.release_button = button("释放", lambda: self.send(self.release_button, GraspGoal.RELEASE), layout, 1, 1)
-        self.cancel_button = button("取消抓取或释放", self.cancel, layout, 2, 0, 2)
-        layout.addWidget(self.details, 3, 0, 1, 2)
-        layout.setRowStretch(4, 1)
+        self.pick_button = button("抓取", lambda: self.toggle(self.pick_button, GraspGoal.PICK), layout, 1, 0)
+        self.release_button = button("释放", lambda: self.toggle(self.release_button, GraspGoal.RELEASE), layout, 1, 1)
+        for widget in (self.pick_button, self.release_button):
+            widget.setObjectName("TaskAction")
+            widget.setToolTip("点击开始，再次点击取消")
+        layout.addWidget(self.details, 2, 0, 1, 2)
+        layout.setRowStretch(3, 1)
         self.update_actions(False)
 
     def update_actions(self, base_ready):
-        available, occupied = self.available(), self.occupied()
+        self.base_ready = base_ready
+        if self.start_deadline is not None:
+            if not base_ready:
+                self.start_failed("车辆状态已变化，视觉动作未发送")
+            elif self.available() and not self.server_busy():
+                self.dispatch()
+            elif time.monotonic() >= self.start_deadline:
+                self.start_failed("视觉 Action 未就绪，请查看服务日志")
+        self.refresh()
+
+    def refresh(self):
         if GraspAction:
-            if not available:
-                caption(self.state, "视觉连接中断，结果待确认" if self.active else "等待视觉服务")
+            if self.start_deadline is not None:
+                caption(self.state, "等待视觉 Action")
+            elif not self.available():
+                caption(self.state, "视觉连接中断，结果待确认" if self.occupied() else "视觉服务未就绪")
             else:
-                caption(self.state, "视觉动作执行中" if occupied else "视觉待命")
+                caption(self.state, "视觉动作执行中" if self.occupied() else "视觉待命")
+        can_start = self.base_ready and self.client is not None and not self.occupied()
         for widget in (self.pick_button, self.release_button):
-            widget.setEnabled(available and not occupied and base_ready)
-        self.cancel_button.setEnabled(self.active and not self.cancel_pending)
+            running = widget is self.selected_button and not self.cancel_pending
+            task_running(widget, running)
+            widget.setEnabled(running or can_start)
+
     def available(self):
-        return (self.client is not None and self.server_status is not None
-                and fresh(self.server_status.header.stamp, 1.0))
+        return (self.server_status is not None and fresh(self.server_status.header.stamp, 1.0)
+                and action_transport_ready(self.client))
+
+    def server_busy(self):
+        return self.available() and any(item.status in self.busy_states for item in self.server_status.status_list)
 
     def occupied(self):
-        return self.active or (self.available()
-                               and any(item.status in self.busy_states for item in self.server_status.status_list))
+        return self.selected_button is not None or self.server_busy()
 
-    def send(self, widget, command):
-        if self.active or not widget.isEnabled():
+    def toggle(self, widget, command):
+        if widget is self.selected_button:
+            self.cancel()
             return
-        self.active, self.cancel_pending = True, False
+        if not widget.isEnabled() or self.occupied():
+            return
+        self.selected_button, self.command = widget, command
+        if self.available():
+            self.dispatch()
+        else:
+            self.start_deadline = time.monotonic() + 15
+            if self.start_service():
+                caption(self.details, "正在启动视觉服务")
+            else:
+                self.start_failed("视觉服务无法启动，请查看服务诊断")
+        self.refresh()
+
+    def dispatch(self):
+        self.start_deadline = None
         caption(self.details, "已发送视觉动作，等待结果")
-        self.update_actions(False)
-        self.client.send_goal(GraspGoal(command=command),
+        self.client.send_goal(GraspGoal(command=self.command),
                               done_cb=lambda state, result: self.events.put(("grasp_result", (state, result))))
 
+    def start_failed(self, reason):
+        if self.start_deadline is not None:
+            self.reset()
+            caption(self.details, reason)
+            self.refresh()
+
     def cancel(self):
-        if self.active and not self.cancel_pending:
+        if self.start_deadline is not None:
+            self.start_failed("已取消，视觉动作未发送")
+        elif self.selected_button is not None and not self.cancel_pending:
             self.cancel_pending = True
             self.client.cancel_goal()
             caption(self.details, "已请求取消，等待视觉终态")
-            self.update_actions(False)
+            self.refresh()
+
+    def reset(self):
+        self.selected_button = self.command = self.start_deadline = None
+        self.cancel_pending = False
 
     def finish(self, state, result):
-        self.active, self.cancel_pending = False, False
+        self.reset()
         caption(self.details, grasp_result_text(state, result))
+        self.refresh()
 
 
 class Operator(QtWidgets.QWidget):
@@ -264,9 +335,8 @@ class Operator(QtWidgets.QWidget):
         self.events = SimpleQueue()
         self.client = None
         self.nav_server_stamp = rospy.Time()
+        self.nav_stopped_at = rospy.Time()
         self.active = self.cancel_pending = self.closed = False
-        self.departure = None
-        self.releasing = self.parking = False
         self.preview = None
         self.preview_mode = None
         self.preview_pub = None
@@ -276,6 +346,7 @@ class Operator(QtWidgets.QWidget):
         self.record_executable = os.environ.get("SLICER_RECORD_RUN")
         self.base = None
         self.gnss = self.sigma = self.fix = None
+        self.scan_stamp = self.lio_stamp = rospy.Time()
         self.last_displayed_result = ""
         self.local_result = False
         self.record_path = ""
@@ -288,49 +359,122 @@ class Operator(QtWidgets.QWidget):
 
     def build(self):
         self.setWindowTitle("Slicer 现场操作")
-        self.resize(1120, 690)
         self.setStyleSheet(STYLE)
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
-        readouts = QtWidgets.QHBoxLayout()
-        self.readouts = []
-        for name in ("车辆", "卫星定位", "导航", "速度"):
-            box = QtWidgets.QFrame()
-            box.setProperty("readout", True)
-            items = QtWidgets.QVBoxLayout(box)
-            items.setSpacing(1)
-            title = message(name)
-            title.setProperty("muted", True)
-            value = message("等待连接")
-            items.addWidget(title)
-            items.addWidget(value)
-            readouts.addWidget(box, 1)
-            self.readouts.append(value)
-        layout.addLayout(readouts)
-
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.map = MapPanel()
-        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        split.addWidget(self.map)
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.setMinimumWidth(312)
-        split.addWidget(self.tabs)
-        split.setStretchFactor(0, 2)
-        split.setStretchFactor(1, 1)
-        split.setCollapsible(0, False)
-        split.setCollapsible(1, False)
-        layout.addWidget(split, 1)
+        self.map.close_requested.connect(self.close)
+        layout.addWidget(self.map, 1)
 
-        nav = QtWidgets.QWidget()
-        self.tabs.addTab(nav, "导航")
+        content = QtWidgets.QWidget(objectName="OperatorSidebarContent")
+        self.sidebar = self.scroll_panel(content)
+        self.sidebar.setObjectName("OperatorSidebar")
+        layout.addWidget(self.sidebar)
+        side = QtWidgets.QVBoxLayout(content)
+        side.setContentsMargins(9, 7, 9, 7)
+        side.setSpacing(5)
+        self.build_readouts(side)
+
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setMinimumHeight(108)
+        self.tabs.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Ignored)
+        side.addWidget(self.tabs, 1)
+        self.build_target_tab()
+
+        rtk = QtWidgets.QWidget()
+        readout = QtWidgets.QVBoxLayout(rtk)
+        readout.setContentsMargins(6, 5, 6, 5)
+        self.rtk_pose = message("等待读取定位")
+        self.rtk_receiver = message("等待读取接收机")
+        readout.addWidget(self.rtk_pose)
+        readout.addWidget(self.rtk_receiver)
+        readout.addStretch()
+        self.tabs.addTab(self.scroll_panel(rtk), "RTK")
+        self.grasp = GraspPanel(self.events, lambda: self.services.ensure_vision())
+        self.tabs.addTab(self.scroll_panel(self.grasp), "抓取")
+
+        actions = QtWidgets.QGridLayout()
+        actions.setSpacing(4)
+        self.navigation_button = button("导航", self.toggle_navigation, actions, 0, 0)
+        self.navigation_button.setObjectName("TaskAction")
+        self.navigation_button.setToolTip("导航到已选目标，再次点击取消")
+        self.record_button = button("录包", self.record, actions, 0, 1)
+        self.notice = message("等待车端服务")
+        self.record_text = message()
+        for row, widget in enumerate((self.notice, self.record_text), start=1):
+            widget.setObjectName("OperatorNotice")
+            actions.addWidget(widget, row, 0, 1, 2)
+        self.record_text.hide()
+        side.addLayout(actions)
+
+        self.services = ServicePanel(os.environ.get("SLICER_SERVICE_RUN"))
+        self.services.stop_requested.connect(self.stop_services)
+        self.services.navigation_stopped.connect(self.navigation_stopped)
+        self.services.vision_start_failed.connect(self.grasp.start_failed)
+        side.addWidget(self.services)
+        self.tabs.currentChanged.connect(self.update_buttons)
+        self.mode_changed()
+        self.resize(1280, 720)
+        self.sidebar.setFixedWidth(self.sidebar_width())
+
+    def sidebar_width(self):
+        return max(284, self.width() // 4)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.sidebar.setFixedWidth(self.sidebar_width())
+
+    @staticmethod
+    def scroll_panel(content):
+        scroll = QtWidgets.QScrollArea(widgetResizable=True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        return scroll
+
+    def build_readouts(self, sidebar):
+        self.rtk_headline = message("RTK状态 · 等待数据")
+        self.rtk_headline.setObjectName("RtkHeadline")
+        self.rtk_freshness = message("等待新鲜 RTK  |  map")
+        self.rtk_freshness.setObjectName("RtkFreshness")
+        sidebar.addWidget(self.rtk_headline)
+        sidebar.addWidget(self.rtk_freshness)
+
+        card = QtWidgets.QWidget(objectName="ReadoutCard")
+        lines = QtWidgets.QVBoxLayout(card)
+        lines.setContentsMargins(8, 5, 8, 5)
+        lines.setSpacing(2)
+        self.position_text = message("当前位置 · —")
+        self.waypoint_text = message("Waypoint · 等待打点")
+        self.alignment_text = message("配准 · 等待状态")
+        self.mission_text = message("任务阶段 · 等待状态")
+        self.scan_text = message("MID360 扫描 · 等待新数据")
+        self.lio_text = message("LIO · 等待新数据")
+        self.base_text = message("底盘驱动 · 等待状态")
+        self.speed_text = message("速度 · —")
+        for label in (self.alignment_text, self.mission_text, self.scan_text, self.lio_text,
+                      self.base_text, self.position_text, self.waypoint_text, self.speed_text):
+            lines.addWidget(label)
+        scroll = self.scroll_panel(card)
+        scroll.setObjectName("LiveReadouts")
+        scroll.setMinimumHeight(112)
+        scroll.setMaximumHeight(126)
+        sidebar.addWidget(scroll)
+
+    def build_target_tab(self):
+        nav = QtWidgets.QWidget(objectName="TargetForm")
+        self.tabs.addTab(self.scroll_panel(nav), "导航")
         form = QtWidgets.QGridLayout(nav)
+        form.setContentsMargins(6, 5, 6, 5)
+        form.setSpacing(3)
         form.setColumnStretch(1, 1)
         self.mode = QtWidgets.QComboBox()
         self.mode.addItem("地图坐标", "本地 map")
         self.mode.addItem("经纬度", "WGS84")
         form.addWidget(self.mode, 0, 0, 1, 2)
         self.fields, self.labels = [], []
-        for index in range(4):
+        for index in range(3):
             label = message()
             value = QtWidgets.QLineEdit()
             value.setInputMethodHints(QtCore.Qt.ImhFormattedNumbersOnly)
@@ -341,54 +485,16 @@ class Operator(QtWidgets.QWidget):
             form.addWidget(value, index + 1, 1)
         self.verify = QtWidgets.QCheckBox("到点后用 RTK 确认", checked=True)
         self.verify.toggled.connect(self.preview_goal)
-        form.addWidget(self.verify, 5, 0, 1, 2)
+        form.addWidget(self.verify, 4, 0, 1, 2)
         self.preview_text = message()
-        form.addWidget(self.preview_text, 6, 0, 1, 2)
-        self.send_button = button("发车", self.send, form, 7, 0, 2)
-        self.send_button.setProperty("primary", True)
-        self.send_button.setMinimumHeight(52)
+        form.addWidget(self.preview_text, 5, 0, 1, 2)
         self.drive_hint = message()
         self.drive_hint.setProperty("muted", True)
-        form.addWidget(self.drive_hint, 8, 0, 1, 2)
+        form.addWidget(self.drive_hint, 6, 0, 1, 2)
         self.details = message()
-        form.addWidget(self.details, 9, 0, 1, 2)
-        form.setRowStretch(10, 1)
+        form.addWidget(self.details, 7, 0, 1, 2)
+        form.setRowStretch(8, 1)
         self.mode.currentIndexChanged.connect(self.mode_changed)
-
-        rtk = QtWidgets.QWidget()
-        readout = QtWidgets.QVBoxLayout(rtk)
-        self.rtk_pose = message("等待读取定位")
-        self.rtk_receiver = message("等待读取接收机")
-        readout.addWidget(self.rtk_pose)
-        readout.addWidget(self.rtk_receiver)
-        readout.addStretch()
-        self.tabs.addTab(rtk, "RTK")
-        self.grasp = GraspPanel(self.events)
-        self.visual_arm_button = button("解除驻车", lambda: self.start_departure(None), self.grasp.layout(), 4, 0, 2)
-        self.grasp.layout().setRowStretch(4, 0)
-        self.grasp.layout().setRowStretch(5, 1)
-        self.tabs.addTab(self.grasp, "视觉")
-        self.services = ServicePanel(os.environ.get("SLICER_SERVICE_RUN"))
-        self.tabs.addTab(self.services, "服务")
-        self.tabs.currentChanged.connect(
-            lambda index: self.services.enter() if self.tabs.widget(index) is self.services else None
-        )
-
-        actions = QtWidgets.QGridLayout()
-        self.hold_button = button("停车", lambda: self.park(), actions, 0, 0)
-        self.hold_button.setProperty("parking", True)
-        self.hold_button.setMinimumWidth(124)
-        self.hold_button.setMinimumHeight(50)
-        self.record_button = button("录包", self.record, actions, 0, 1)
-        self.notice = message("等待车端服务")
-        self.record_text = message()
-        actions.addWidget(self.notice, 0, 2)
-        actions.addWidget(self.record_text, 1, 0, 1, 3)
-        if not self.record_executable:
-            caption(self.record_text, "录包工具未配置")
-        actions.setColumnStretch(2, 1)
-        layout.addLayout(actions)
-        self.mode_changed()
 
     def connect_ros(self):
         try:
@@ -406,6 +512,7 @@ class Operator(QtWidgets.QWidget):
                 ("/gnss/fix_quality", DiagnosticArray, "sigma"),
                 ("/gnss/fix", NavSatFix, "fix"),
                 ("~map_point", PoseStamped, "map_point"),
+                ("~waypoint_point", PoseStamped, "waypoint_point"),
             ]
             if grasp is not None:
                 topics.append(("/ugv/grasp/status", GoalStatusArray, "grasp_status"))
@@ -413,36 +520,43 @@ class Operator(QtWidgets.QWidget):
                 subscription = rospy.Subscriber(topic, cls, lambda value, key=event: self.events.put((key, value)),
                                                 queue_size=1)
                 self.subscribers.append(subscription)
+            for topic, cls, event in (("/scan", LaserScan, "scan_stamp"), ("/lio/odom", Odometry, "lio_stamp")):
+                subscription = rospy.Subscriber(
+                    topic, cls, lambda value, key=event: self.events.put((key, value.header.stamp)), queue_size=1
+                )
+                self.subscribers.append(subscription)
         except (OSError, rospy.ROSException) as error:
             self.events.put(("control", str(error)))
 
     def connect_map(self):
         self.preview_pub = rospy.Publisher("~target_preview", PoseStamped, queue_size=1, latch=True)
         try:
-            self.map.connect_rviz(rospy.resolve_name("~map_point"), self.preview_pub.resolved_name)
+            self.map.connect_rviz(rospy.resolve_name("~map_point"), self.preview_pub.resolved_name,
+                                  rospy.resolve_name("~waypoint_point"))
             if self.preview is not None and self.preview.mode == Goal.LOCAL_POSE:
                 self.publish_preview(self.preview.local_target)
         except (ImportError, OSError, RuntimeError) as error:
             caption(self.map.canvas, f"RViz 无法加载 · {error}")
 
-    def update_buttons(self):
-        base = self.base
-        idle = not self.active and self.departure is None and not (self.releasing or self.parking)
+    def update_buttons(self, *_args):
         drive_block = self.drive_blocked()
-        parked = bool(base and base.hold)
-        can_arm = idle and not drive_block and self.stationary()
-        self.grasp.update_actions(can_arm and not parked)
-        self.visual_arm_button.setVisible(parked and self.grasp.available())
-        self.visual_arm_button.setEnabled(can_arm and parked)
-        nav_available = self.client is not None and fresh(self.nav_server_stamp, 1.0)
-        nav_block = drive_block
+        stopping = self.services.stopping_work
+        self.grasp.update_actions(not self.active and not drive_block and not stopping and self.stationary())
+        nav_available = fresh(self.nav_server_stamp, 1.0) and action_transport_ready(self.client)
+        self.services.set_navigation_ready(nav_available)
         if not nav_available:
-            nav_block = "请在「服务」页启动定位和导航"
-        elif parked and not nav_block and not self.stationary():
-            nav_block = "等车辆停稳后发车"
-        self.send_button.setEnabled(idle and self.preview is not None and not nav_block)
-        caption(self.drive_hint, nav_block if idle else "")
-        self.hold_button.setEnabled(self.ros_ready)
+            nav_block = "请先点「启动导航」"
+        elif stopping:
+            nav_block = "正在停止作业"
+        elif self.grasp.occupied() or (self.base and self.base.active_velocity_source == "mission"):
+            nav_block = "视觉或其他任务正在用车"
+        else:
+            nav_block = drive_block
+        running = self.active and not self.cancel_pending
+        ready = self.tabs.currentIndex() == 0 and not self.active and self.preview is not None and not nav_block
+        task_running(self.navigation_button, running)
+        self.navigation_button.setEnabled(running or ready)
+        caption(self.drive_hint, nav_block if not self.active else "")
         self.record_button.setEnabled(bool(self.record_executable and self.ros_ready and not self.saving_recording))
 
     def drive_blocked(self):
@@ -453,10 +567,10 @@ class Operator(QtWidgets.QWidget):
             return "车辆急停中"
         if not base.base_online:
             return "底盘未就绪"
+        if base.hold:
+            return "车端已驻车"
         if base.manual_override or base.active_velocity_source == "teleop":
             return "手柄正在接管"
-        if self.grasp.occupied() or base.active_velocity_source == "mission":
-            return "视觉或其他任务正在用车"
         return ""
 
     def stationary(self):
@@ -467,21 +581,18 @@ class Operator(QtWidgets.QWidget):
 
     def mode_changed(self, *_args):
         local = self.mode.currentIndex() == 0
-        captions = ("X (m)", "Y (m)", "高度 (m)", "航向 (rad)") if local else (
-            "纬度 (°)", "经度 (°)", "椭球高 (m)", "航向 (rad)"
+        captions = ("X (m)", "Y (m)", "高度 (m)") if local else (
+            "纬度 (°)", "经度 (°)", "椭球高 (m)"
         )
         for label, text in zip(self.labels, captions):
             caption(label, text)
-        for field in self.fields[2:]:
-            field.setPlaceholderText("可选")
+        self.fields[2].setPlaceholderText("可选")
         self.labels[2].setVisible(not local)
         self.fields[2].setVisible(not local)
         self.verify.setVisible(not local)
         self.preview_goal()
 
     def preview_goal(self, *_args):
-        if self.departure is not None and self.departure.goal is not None:
-            self.abort_departure("目标已修改，本次未发车")
         self.preview = None
         self.map.show_marker(False)
         values = [field.text() for field in self.fields]
@@ -494,7 +605,7 @@ class Operator(QtWidgets.QWidget):
             except ValueError as error:
                 caption(self.preview_text, str(error))
         else:
-            caption(self.preview_text, "可在地图选点，或直接输入坐标" if self.mode.currentIndex() == 0
+            caption(self.preview_text, "用 2D Nav Goal 选点，或直接输入坐标" if self.mode.currentIndex() == 0
                     else "输入目标的纬度和经度")
         self.update_buttons()
 
@@ -504,13 +615,30 @@ class Operator(QtWidgets.QWidget):
         except ValueError as error:
             caption(self.notice, str(error))
             return
+        if not fresh(pose.header.stamp, 1.0):
+            caption(self.notice, "目标已过期，请重新选点")
+            return
+        if self.active:
+            caption(self.notice, "等待当前导航结束后再选点")
+            self.map.select_move()
+            return
         self.tabs.setCurrentIndex(0)
         self.mode.setCurrentIndex(0)
         self.fields[0].setText(f"{x:.4f}")
         self.fields[1].setText(f"{y:.4f}")
-        self.fields[3].clear()
         self.preview_goal()
         self.map.select_move()
+        self.toggle_navigation()
+
+    def waypoint_point(self, pose):
+        try:
+            x, y = map_coordinates(pose)
+        except ValueError as error:
+            caption(self.notice, str(error))
+            return
+        coordinates = f"map X {x:.3f} m，Y {y:.3f} m"
+        caption(self.waypoint_text, f"Waypoint · {coordinates}")
+        caption(self.notice, f"Waypoint · {coordinates}")
 
     def publish_preview(self, pose):
         if self.preview_pub is not None:
@@ -518,52 +646,14 @@ class Operator(QtWidgets.QWidget):
             self.preview_pub.publish(marker)
             self.map.show_marker(True)
 
-    def send(self):
+    def toggle_navigation(self):
+        if self.active:
+            self.cancel()
+            return
         self.update_buttons()
-        if not self.send_button.isEnabled():
+        if not self.navigation_button.isEnabled():
             return
-        if self.base.hold:
-            self.start_departure(self.preview)
-        else:
-            self.send_goal(self.preview)
-
-    def start_departure(self, goal):
-        if (self.departure is not None or self.active or self.releasing or self.parking
-                or self.drive_blocked() or not self.stationary()
-                or not self.base.hold or (goal is None and not self.grasp.available())):
-            return
-        self.departure = Departure(goal, self.base.control_epoch)
-        self.releasing = True
-        caption(self.notice, "正在解除驻车")
-        self.request_control("release", self.departure)
-        self.update_buttons()
-
-    def update_departure(self):
-        departure = self.departure
-        if departure is None:
-            return
-        base = self.base
-        blocked = self.drive_blocked()
-        if blocked:
-            self.abort_departure(f"{blocked}，本次未发车")
-        elif not self.stationary() or (departure.goal is not None and not fresh(self.nav_server_stamp, 1.0)):
-            self.abort_departure("车辆状态已变化，本次未发车")
-        elif base.control_epoch != departure.epoch + int(not base.hold):
-            self.abort_departure("车辆控制权已变化，本次未发车")
-        elif time.monotonic() > departure.deadline:
-            self.abort_departure("未确认解除驻车，本次未发车")
-        elif departure.acknowledged and not base.hold and base.header.stamp > departure.requested_at:
-            self.departure = None
-            caption(self.notice, "驻车已解除")
-            if departure.goal is not None:
-                self.send_goal(departure.goal)
-
-    def abort_departure(self, notice):
-        self.departure.canceled.set()
-        self.departure = None
-        self.park(notice)
-
-    def send_goal(self, goal):
+        goal = self.preview
         self.active, self.cancel_pending = True, False
         self.local_result = False
         self.preview_mode = goal.mode
@@ -572,50 +662,27 @@ class Operator(QtWidgets.QWidget):
             done_cb=lambda state, result: self.events.put(("result", (state, result))),
             feedback_cb=lambda value: self.events.put(("feedback", value)),
         )
-        caption(self.details, "已发车，等待导航")
+        caption(self.details, "已发送导航目标")
         self.update_buttons()
 
     def cancel(self):
         if self.active and not self.cancel_pending:
             self.cancel_pending = True
             self.client.cancel_goal()
-            caption(self.details, "已请求停车")
+            caption(self.details, "已请求取消，等待导航终态")
             self.update_buttons()
 
-    def park(self, notice="正在停车"):
-        if self.departure is not None:
-            self.departure.canceled.set()
-            self.departure = None
+    def stop_services(self):
         self.cancel()
         self.grasp.cancel()
-        self.parking = True
-        caption(self.notice, notice)
-        self.request_control("hold")
+        self.services.stop_work()
         self.update_buttons()
 
-    def request_control(self, name, departure=None):
-        def call_service(role):
-            try:
-                path = "/ugv/control/" + role
-                rospy.wait_for_service(path, timeout=1.0)
-                service = rospy.ServiceProxy(path, Control)
-                if role == "release" and departure is not None and departure.canceled.is_set():
-                    return False, ""
-                response = service()
-                return response.accepted, response.reason
-            except (OSError, rospy.ROSException, rospy.ServiceException) as error:
-                return False, str(error)
-
-        def call():
-            accepted, reason = call_service(name)
-            if departure is None:
-                self.events.put(("parked_ack", (accepted, reason)))
-            else:
-                if departure.canceled.is_set():
-                    # A late release acknowledgment must leave the earlier stop in effect.
-                    self.events.put(("parked_ack", call_service("hold")))
-                self.events.put(("departure_ack", (departure, accepted, reason)))
-        Thread(target=call, daemon=True).start()
+    def navigation_stopped(self):
+        if self.ros_ready:
+            self.nav_stopped_at = rospy.Time.now()
+        self.nav_server_stamp = rospy.Time()
+        self.update_buttons()
 
     def record(self):
         if self.recorder is not None:
@@ -652,12 +719,20 @@ class Operator(QtWidgets.QWidget):
         self.events.put(("recorded", process.wait()))
 
     def show_status(self):
+        for label, name, stamp in ((self.scan_text, "MID360 扫描", self.scan_stamp),
+                                   (self.lio_text, "LIO", self.lio_stamp)):
+            ready = fresh(stamp, 1.0)
+            caption(label, f"{name} · 就绪" if ready else f"{name} · 等待新数据", "ok" if ready else "warn")
+
         status = self.base
         if status is None or not fresh(status.header.stamp):
             if self.ros_ready:
-                caption(self.readouts[0], "状态未连接" if status is None else "状态过期", "warn")
-                for readout in self.readouts[1:]:
-                    caption(readout, "—", "warn")
+                reason = "状态未连接" if status is None else "状态过期"
+                caption(self.base_text, f"底盘驱动 · {reason}", "warn")
+                caption(self.alignment_text, "配准 · 等待状态", "warn")
+                caption(self.mission_text, "任务阶段 · 等待状态", "warn")
+                caption(self.position_text, "当前位置 · —")
+                caption(self.speed_text, "速度 · —", "warn")
                 caption(self.rtk_pose, "车端状态不可用")
             return
         if status.estop:
@@ -670,19 +745,19 @@ class Operator(QtWidgets.QWidget):
             base, tone = "驻车", "warn"
         else:
             base, tone = "在线", "ok"
-        fix = FIX.get(status.gnss_fix_type, "未知") if status.gnss_valid else "无有效观测"
         speed = (f"{status.velocity.twist.linear.x:.2f} m/s"
                  if status.velocity_valid and fresh(status.velocity.header.stamp) else "—")
-        caption(self.readouts[0], f"{base} · {stop_label(status.stop_valid, status.stopped)}", tone)
-        caption(self.readouts[1], fix, "ok" if fix == "Fixed" else "warn")
+        caption(self.base_text, f"底盘驱动 · {base} · {stop_label(status.stop_valid, status.stopped)}", tone)
         phases = PHASES.get(status.phase, "未知")
-        caption(self.readouts[2], phases, "ok" if status.phase == status.IDLE else "warn")
+        caption(self.mission_text, f"任务阶段 · {phases}", "ok" if status.phase == status.IDLE else "warn")
         source = status.active_velocity_source or "—"
-        caption(self.readouts[3], f"{speed} · {source}", "ok" if status.velocity_valid else "warn")
+        caption(self.speed_text, f"速度 · {speed} · {source}", "ok" if speed != "—" else "warn")
 
         align = ALIGNMENT.get(status.alignment_state, "未知")
+        caption(self.alignment_text, f"配准 · {align}", "ok" if status.alignment_state == status.ALIGNMENT_READY else "warn")
         position = status.pose.pose.position
         pose = f"{position.x:.2f}, {position.y:.2f} m" if status.pose_valid else "—"
+        caption(self.position_text, f"当前位置 · {pose}")
         wgs84 = (f"{status.wgs84_latitude_deg:.8f}°, {status.wgs84_longitude_deg:.8f}°"
                  if status.wgs84_valid else "—")
         yaw = f"{math.degrees(status.yaw_enu_rad):.1f}°" if status.yaw_enu_valid else "—"
@@ -702,6 +777,22 @@ class Operator(QtWidgets.QWidget):
         if (self.sigma and self.fix and self.sigma.header.stamp == self.fix.header.stamp
                 and fresh(self.fix.header.stamp, 2.5)):
             _, quality = receiver_fields(self.sigma)
+        fix_type, tone = "等待数据", "warn"
+        status = self.base
+        valid = (status is not None and fresh(status.header.stamp) and status.gnss_valid
+                 and fresh(status.gnss_stamp, 2.5))
+        if valid:
+            fix_type = FIX.get(status.gnss_fix_type, "未知")
+        elif fields.get("fix_valid") == "true":
+            fix_type = RECEIVER_FIX.get(fields.get("fix_type"), "未知")
+        elif self.fix and fresh(self.fix.header.stamp, 2.5) and self.fix.status.status == NavSatStatus.STATUS_NO_FIX:
+            fix_type, tone = "NO FIX", "stop"
+        if fix_type == "Fixed":
+            tone = "ok"
+        caption(self.rtk_headline, f"RTK状态 · {fix_type}（卫星 {value_text(fields.get('satellites'))}）", tone)
+        usable = quality.get("fresh_rtk_usable") == "true"
+        caption(self.rtk_freshness, "新鲜 RTK 可用  |  map" if usable else "等待新鲜 RTK  |  map")
+
         correction = fields.get("rtcm_serial_write_age_s")
         correction = f"{correction} s" if value_text(correction) != "—" else "—"
         ntrip = ("已连接" if fields.get("ntrip_connected") == "true"
@@ -730,11 +821,14 @@ class Operator(QtWidgets.QWidget):
             elif event == "status":
                 self.base = value
             elif event == "navigation_status":
-                self.nav_server_stamp = value.header.stamp
-            elif event in ("gnss", "sigma", "fix"):
+                if value.header.stamp > self.nav_stopped_at:
+                    self.nav_server_stamp = value.header.stamp
+            elif event in ("gnss", "sigma", "fix", "scan_stamp", "lio_stamp"):
                 setattr(self, event, value)
             elif event == "map_point":
                 self.map_point(value)
+            elif event == "waypoint_point":
+                self.waypoint_point(value)
             elif event == "feedback":
                 caption(self.details, progress_text(value))
                 if value.projected_target_valid:
@@ -760,22 +854,6 @@ class Operator(QtWidgets.QWidget):
                 self.grasp.finish(*value)
             elif event == "control":
                 caption(self.notice, value)
-            elif event == "departure_ack":
-                departure, accepted, reason = value
-                self.releasing = False
-                if self.departure is departure:
-                    if accepted:
-                        departure.acknowledged = True
-                    else:
-                        self.abort_departure("无法解除驻车，本次未发车")
-                        self.notice.setToolTip(reason)
-            elif event == "parked_ack":
-                self.parking = False
-                if not value[0]:
-                    caption(self.notice, "停车未确认，请检查车辆")
-                    self.notice.setToolTip(value[1])
-                elif self.notice.text() == "正在停车":
-                    caption(self.notice, "已请求停车，请确认车已停稳")
             elif event == "record_path":
                 self.record_path = value
                 caption(self.record_text, f"正在启动录包 · {value}")
@@ -797,9 +875,9 @@ class Operator(QtWidgets.QWidget):
                 and any(Path(self.record_path).glob("*.bag.active"))):
             self.recording_active = True
             caption(self.record_text, f"正在录包 · {self.record_path}")
+        self.record_text.setVisible(bool(self.record_text.text()))
         self.show_status()
         self.show_receiver()
-        self.update_departure()
         self.update_buttons()
         if rospy.is_shutdown():
             QtWidgets.QApplication.quit()
@@ -809,23 +887,13 @@ class Operator(QtWidgets.QWidget):
             return
         self.closed = True
         self.timer.stop()
-        if self.departure is not None:
-            self.abort_departure("关闭界面，本次未发车")
         self.cancel()
         self.grasp.cancel()
         self.stop_record()
         self.map.close_map()
 
     def closeEvent(self, event):
-        if self.departure is not None:
-            self.abort_departure("关闭界面，本次未发车")
-            event.ignore()
-            return
-        if self.releasing or self.parking:
-            event.ignore()
-            return
-        if self.services.operation in ("start", "stop", "restart"):
-            self.tabs.setCurrentWidget(self.services)
+        if self.services.stopping_work or self.services.operation in ("start", "stop", "restart"):
             event.ignore()
             return
         self.shutdown()

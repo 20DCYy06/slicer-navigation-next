@@ -56,6 +56,10 @@ class Task:
     verify_deadline: float = 0.0
     arrival: object = None
 
+    @property
+    def requires_yaw(self):
+        return self.goal.mode == Goal.LOCAL_POSE and self.goal.has_yaw
+
 
 def fresh(stamp, limit, now=None):
     if stamp.is_zero():
@@ -96,9 +100,6 @@ class NavigationServer:
         self.footprint = rospy.get_param("/ugv/motion/footprint")
         self.stop_timeout = rospy.get_param("/ugv/motion/stop_timeout_s")
         self.stop_freshness = rospy.get_param("/ugv/motion/stop_freshness_s")
-        self.verified_stop_reserve_m = (
-            rospy.get_param("/ugv/motion/stop_linear_mps") * rospy.get_param("/ugv/motion/stop_window_s")
-        )
         self.default_timeout = rospy.get_param("~default_timeout_s", 120.0)
         self.startup_timeout = rospy.get_param("~startup_timeout_s", 3.0)
         self.preparation_timeout = rospy.get_param("~preparation_timeout_s", 60.0)
@@ -181,13 +182,12 @@ class NavigationServer:
                     (goal.has_yaw and not math.isfinite(goal.yaw_enu_rad))):
                 return Result.INVALID_GOAL, "Invalid WGS84 coordinate or ENU yaw"
             altitude = goal.altitude_ellipsoid_m if goal.has_altitude else None
-            yaw = goal.yaw_enu_rad if goal.has_yaw else None
             try:
                 self.geo.validate_site(goal.latitude_deg, goal.longitude_deg, altitude)
                 grid = self.current_grid()
                 if grid is None or not self.geo.ready:
                     return None
-                target = self.geo.project(goal.latitude_deg, goal.longitude_deg, altitude, yaw)
+                target = self.geo.project(goal.latitude_deg, goal.longitude_deg, altitude)
             except GeographicUnavailable:
                 return None
             except ValueError as exc:
@@ -333,7 +333,7 @@ class NavigationServer:
             return
         if task.target is None and not geo_goal:
             task.target = deepcopy(task.goal.local_target)
-            if not task.goal.has_yaw:
+            if not task.requires_yaw:
                 task.target.pose.orientation = pose.pose.pose.orientation
 
         if task.drive_target is None:
@@ -342,6 +342,11 @@ class NavigationServer:
         if grid_cell(grid, point.x, point.y) is None:
             self.begin_stop(task, Result.OUTSIDE_MAP, "Navigation target is outside the current global costmap")
             return
+        if not task.preparation and not task.requires_yaw:
+            position_error, _ = pose_error(pose.pose.pose, task.target.pose, False)
+            if position_error <= self.tolerances(task)[0]:
+                self.begin_stop(task, Result.SUCCESS, "Target position reached")
+                return
         self.drive(task, now, base)
 
     def geographic_target(self, task, now):
@@ -360,8 +365,7 @@ class NavigationServer:
             goal = task.goal
             try:
                 task.projected = self.geo.project(goal.latitude_deg, goal.longitude_deg,
-                    goal.altitude_ellipsoid_m if goal.has_altitude else None,
-                    goal.yaw_enu_rad if goal.has_yaw else None)
+                    goal.altitude_ellipsoid_m if goal.has_altitude else None)
             except GeographicUnavailable as exc:
                 self.begin_stop(task, Result.LOCALIZATION_UNAVAILABLE, str(exc))
                 return False
@@ -369,7 +373,7 @@ class NavigationServer:
                 self.begin_stop(task, Result.OUTSIDE_MAP, str(exc))
                 return False
             target = task.projected
-            task.target = map_pose(target.x, target.y, target.yaw if target.yaw is not None else 0.0)
+            task.target = map_pose(target.x, target.y, 0.0)
             task.phase, task.reason = Feedback.PLANNING, ""
             return True
         task.phase, task.reason = Feedback.PREPARING, "Collecting aligned RTK and LIO motion"
@@ -445,7 +449,7 @@ class NavigationServer:
         if task.config is None:
             if self.last_config is not None and not self.last_config.done:
                 return
-            xy, yaw = self.planner_tolerances(task)
+            xy, yaw = self.tolerances(task)
             task.config = self.last_config = self.services.submit(self.move_base.configure, xy, yaw, task.preparation)
         if not task.config.done:
             return
@@ -474,16 +478,9 @@ class NavigationServer:
     @staticmethod
     def tolerances(task):
         if task.preparation:
-            return .20, math.pi + .001
+            return .20, 3.15
         xy = task.goal.xy_tolerance_m or .20
-        yaw = (task.goal.yaw_tolerance_rad or .30) if task.goal.has_yaw else math.pi + .001
-        return xy, yaw
-
-    def planner_tolerances(self, task):
-        xy, yaw = self.tolerances(task)
-        if not task.preparation and task.goal.mode == Goal.WGS84 and task.goal.require_geographic_verification:
-            # Leave room for motion at the stop threshold during the measurement window.
-            xy -= min(self.verified_stop_reserve_m, xy * .5)
+        yaw = (task.goal.yaw_tolerance_rad or .30) if task.requires_yaw else 3.15
         return xy, yaw
 
     def release(self, task):
@@ -545,7 +542,7 @@ class NavigationServer:
         if pose is None:
             self.finish(task, Result.LOCALIZATION_UNAVAILABLE, "Fresh final pose unavailable")
             return
-        position_error, yaw_error = pose_error(pose.pose.pose, task.target.pose, task.goal.has_yaw)
+        position_error, yaw_error = pose_error(pose.pose.pose, task.target.pose, task.requires_yaw)
         xy, yaw = self.tolerances(task)
         if position_error > xy or (yaw_error is not None and yaw_error > yaw):
             self.finish(task, Result.NO_PATH, "Final stopped pose is outside the requested tolerance")
@@ -599,14 +596,14 @@ class NavigationServer:
             result.stop_valid, result.stopped = self.observed_stop(task)
         pose = self.current_pose()
         if task.target is not None and pose is not None:
-            error, yaw_error = pose_error(pose.pose.pose, task.target.pose, task.goal.has_yaw)
+            error, yaw_error = pose_error(pose.pose.pose, task.target.pose, task.requires_yaw)
             result.position_error_valid, result.position_error_m = True, error
             result.error_source = "map"
             if yaw_error is not None:
                 result.yaw_error_valid, result.yaw_error_rad = True, yaw_error
         if task.arrival and task.arrival.valid:
             result.position_error_valid, result.position_error_m = True, task.arrival.error_m
-            result.error_source = "gnss_xy+map_yaw" if result.yaw_error_valid else "gnss_xy"
+            result.error_source = "gnss_xy"
         if code == Result.SUCCESS:
             task.handle.set_succeeded(result, reason)
         elif code in (Result.CANCELED, Result.REPLACED):

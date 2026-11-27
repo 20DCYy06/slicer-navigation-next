@@ -82,27 +82,26 @@ class InstalledBaseOwnership(unittest.TestCase):
 
     def test_online_handoff_hold_watchdog_and_servo(self):
         started = self.until(lambda status: status.base_online and status.stopped)
-        self.assertTrue(started.hold and started.stop_valid)
+        self.assertFalse(started.hold)
+        self.assertTrue(started.stop_valid)
         self.assertEqual(started.active_velocity_source, "zero")
 
         release = rospy.ServiceProxy("/ugv/control/release", Control)
         hold = rospy.ServiceProxy("/ugv/control/hold", Control)
         authority = rospy.ServiceProxy("/ugv/internal/nav_authority", NavigationAuthority)
         servo = rospy.ServiceProxy("/ugv/actuators/servo", Servo)
-        self.assertTrue(release().accepted)
-        released = self.until(lambda status: not status.hold)
-        self.assertTrue(authority("a", True, released.control_epoch).accepted)
+        self.assertTrue(authority("a", True, started.control_epoch).accepted)
         self.until(lambda status: status.active_velocity_source == "nav" and status.velocity.twist.linear.x > .02,
                    lambda: self.publish_nav("a"))
 
-        self.assertTrue(authority("b", True, released.control_epoch).accepted)
-        self.assertFalse(authority("a", False, released.control_epoch).accepted)
+        self.assertTrue(authority("b", True, started.control_epoch).accepted)
+        self.assertFalse(authority("a", False, started.control_epoch).accepted)
         self.until(lambda status: status.active_velocity_source == "nav" and status.nav_goal_id == "b",
                    lambda: self.publish_nav("b"))
 
         handed = self.until(lambda status: status.active_velocity_source == "mission", self.publish_mission)
         self.assertFalse(handed.nav_goal_id)
-        self.assertNotEqual(handed.control_epoch, released.control_epoch)
+        self.assertNotEqual(handed.control_epoch, started.control_epoch)
         stopped = self.until(lambda status: status.stopped and status.active_velocity_source == "zero")
         self.assertGreater(stopped.velocity.header.stamp, handed.velocity.header.stamp)
 

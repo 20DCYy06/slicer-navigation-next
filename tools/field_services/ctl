@@ -79,7 +79,11 @@ case "$action" in
                 source "$active_release/install/setup.bash"
                 unset ROS_HOSTNAME
                 export ROS_MASTER_URI=http://localhost:11311 ROS_IP=127.0.0.1
-                timeout 12s "$active_release/install/lib/slicer_bringup/quiesce_node.py"
+                quiesce_options=()
+                if [[ "$role" != master && "$role" != base ]]; then
+                    quiesce_options+=(--no-hold)
+                fi
+                timeout 12s "$active_release/install/lib/slicer_bringup/quiesce_node.py" "${quiesce_options[@]}"
             )
         fi
         if [[ "$action" == start && "$role" == master && -f "$pin" && $(<"$pin") != "$release" ]]; then

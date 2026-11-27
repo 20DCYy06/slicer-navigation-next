@@ -110,8 +110,14 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     };
     std::vector<Point2> retained_suffix;
     std::vector<geometry_msgs::PoseStamped> original;
+    const auto opposes_side = [&](const std::vector<geometry_msgs::PoseStamped>& path) {
+      if (!side_enabled_ || !task_side_.side()) return false;
+      std::vector<Point2> route;
+      route.reserve(path.size());
+      for (const auto& pose : path) route.push_back(point(pose));
+      return task_side_.opposes(route);
+    };
     bool used_tracking_reserve = false;
-    bool straight_observed = false;
     if (cost_field_enabled_) {
       grid = snapshot();
       double inscribed, circumscribed;
@@ -131,11 +137,12 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
         return reject(goal, std::string("start ") + reason);
       if (const auto* reason = cell_rejection(point(goal), allow_unknown_))
         return reject(goal, std::string("goal ") + reason);
-      if (epoch == previous_epoch_ && sameGoal(goal)) {
+      const bool same_goal = sameGoal(goal);
+      if (same_goal && epoch == previous_epoch_) {
         retained_suffix = remainingRoute(previous_path_, point(start), cost_options_.rejoin_distance_m);
-      } else if (side_enabled_) {
-        task_side_.reset(point(start), point(goal));
       }
+      // Cache refreshes invalidate the old path reference but keep the task side.
+      if (side_enabled_ && !same_goal) task_side_.reset(point(start), point(goal));
       const auto checked = [&] {
         // In old Navfn coordinates the traceback indexes cell centres from
         // the map origin and appends the exact goal twice. Avoid gratuitous
@@ -158,7 +165,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
         original.push_back(terminal);
         return pathFeasible(original, half_cell, feasible);
       };
-      const auto solve = [&] {
+      const auto solve = [&](const std::vector<Point2>& reference) {
         search_grid_ = grid;
         auto* costs = search_grid_.getCharMap();
         if (cost_options_.obstacle_weight > 0.)
@@ -190,12 +197,8 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
             original.push_back(pose);
           }
           original.push_back(goal);
-          if (pathFeasible(original, half_cell, clear)) {
-            straight_observed = true;
-            return true;
-          }
+          if (pathFeasible(original, half_cell, clear)) return true;
         }
-        const auto reference = observedReference(retained_suffix, half_cell, feasible);
         encodeContinuityCosts(costs, hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
             grid.getResolution(), {grid.getOriginX(), grid.getOriginY()}, point(start),
             reference, cost_options_, costs);
@@ -204,48 +207,59 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
         // Retry the identical objective once with cell-centre traceback
         // when interpolation crossed the active mask.
         original.clear();
-        return grid_fallback_->makePlan(start, goal, original) && !original.empty() && checked();
+        if (grid_fallback_->makePlan(start, goal, original) && !original.empty() && checked()) return true;
+        original.clear();
+        return false;
+      };
+      const auto solve_with_side = [&] {
+        const auto reference = observedReference(retained_suffix, grid.getResolution() * .5, feasible);
+        if (!solve(reference)) return false;
+        if (!opposes_side(original)) return true;
+
+        // Replan on the remembered side using today's grid, even when no
+        // segment of the old route survives as a continuity reference.
+        auto unrestricted = std::move(original);
+        auto clearance_mask = hard;
+        maskRouteRegion(hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(), grid.getResolution(),
+                        {grid.getOriginX(), grid.getOriginY()},
+                        [&](Point2 p) { return task_side_.oppositeRegion(p); });
+        const bool same_side = feasible(point(start), allow_unknown_) &&
+                               feasible(point(goal), allow_unknown_) && solve(reference) &&
+                               !opposes_side(original);
+        hard.swap(clearance_mask);
+        if (same_side) {
+          status("task side retained: replanned on current grid");
+        } else {
+          original = std::move(unrestricted);
+        }
+        return true;
       };
       if (tracking_reserve_m_ > 0.) {
-        // Prefer a complete route with spare clearance before using the
-        // nominal mask, which remains the acceptance limit for start and goal.
         auto alternate_mask = mask(clearance + tracking_reserve_m_);
-        if (!alternate_mask.empty()) {
+        hard.swap(alternate_mask);
+        used_tracking_reserve = feasible(point(start), allow_unknown_) &&
+                                feasible(point(goal), allow_unknown_) && solve_with_side();
+        if (!used_tracking_reserve) {
+          original.clear();
           hard.swap(alternate_mask);
-          used_tracking_reserve = feasible(point(start), allow_unknown_) &&
-                                  feasible(point(goal), allow_unknown_) && solve();
-          if (!used_tracking_reserve) hard.swap(alternate_mask);
+        } else if (opposes_side(original)) {
+          // The extra tracking reserve must not by itself force a side change.
+          auto reserve_route = std::move(original);
+          hard.swap(alternate_mask);
+          if (solve_with_side() && !opposes_side(original)) {
+            used_tracking_reserve = false;
+          } else {
+            hard.swap(alternate_mask);
+            original = std::move(reserve_route);
+          }
         }
       }
-      if (!used_tracking_reserve && !solve()) return reject(goal, "no valid traceback on the current cost field");
+      if (original.empty() && !used_tracking_reserve && !solve_with_side())
+        return reject(goal, "no valid traceback on the current cost field");
     } else if (!raw_ || !raw_->makePlan(start, goal, original) || original.empty()) {
       return false;
     }
     publish(raw_pub_,original);
-    if (cost_field_enabled_ && side_enabled_) {
-      std::vector<Point2> candidate;
-      for (const auto& pose : original) candidate.push_back(point(pose));
-      if (!straight_observed && retained_suffix.size() >= 2) {
-        retained_suffix.insert(retained_suffix.begin(), point(start));
-        if (task_side_.keep(candidate, routeLength(retained_suffix))) {
-          std::vector<geometry_msgs::PoseStamped> retained;
-          retained.reserve(retained_suffix.size());
-          for (const auto& p : retained_suffix) {
-            auto pose = start;
-            pose.pose.position.x = p.x;
-            pose.pose.position.y = p.y;
-            retained.push_back(pose);
-          }
-          retained.back() = original.back();
-          if (pathFeasible(retained, grid.getResolution() * .5, feasible)) {
-            plan = std::move(retained);
-            status("task side retained: opposite path below 25% advantage");
-            return deliver(goal, plan, epoch);
-          }
-        }
-      }
-      task_side_.accept(candidate);
-    }
     if(!enabled_ || original.size()<2) {
       plan=original;
       status("raw: disabled or stationary");
@@ -343,6 +357,9 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     if (cost_field_enabled_ && !pathFeasible(plan, grid.getResolution() * .5, feasible)) {
       plan = original;
       status("raw fallback: smoothed splice crossed hard geometry");
+    } else if (cost_field_enabled_ && opposes_side(plan) != opposes_side(original)) {
+      plan = original;
+      status("raw fallback: smoothing changed the task side");
     }
     return deliver(goal, plan, epoch);
   }
@@ -415,6 +432,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
       previous_goal_ = goal;
       previous_path_.clear();
       for (const auto& pose : path) previous_path_.push_back(point(pose));
+      if (side_enabled_) task_side_.accept(previous_path_);
     }
     publish(smooth_pub_, path);
     return true;
