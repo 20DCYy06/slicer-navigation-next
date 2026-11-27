@@ -1,26 +1,22 @@
 # BT 与现场客户端接口
 
-ROS1 Noetic。BT 使用新导航仓库的 `slicer_interfaces` 消息与下表公开入口。正式 Action、现场客户端与独立 mock 使用这套消息。接入车端时加载新导航发布的 `install/setup.bash`，并使用与车端相同的 `ROS_MASTER_URI`。
+ROS1 Noetic。导航、状态和底盘使用导航仓库的 `slicer_interfaces`，抓取使用独立视觉工程 `slicer-visual-grasp` 生成的消息。客户端和两套节点连接同一个 `ROS_MASTER_URI`，并加载车端配套的安装环境。
 
-| 名称 | 类型 | 作用 |
-| --- | --- | --- |
-| `/ugv/navigate` | `slicer_interfaces/NavigateToPointAction` | 每次执行一个目标。首个 WGS84 目标可进入配准准备。 |
-| `/ugv/status` | `slicer_interfaces/UgvStatus` | 约 10 Hz。每条观测使用其原始时间和有效性，终态与当前任务分别保存。 |
-| `/ugv/control/hold`、`/ugv/control/release` | `slicer_interfaces/Control` | 空请求，返回 `accepted`、`reason`。Hold 抑制自主及任务运动。Release 解除 hold，原任务需重发，急停独立处理。 |
-| `/ugv/cmd_vel/mission` | `geometry_msgs/TwistStamped` | 同机 ROS 时钟。位置系 `base_link`，`linear.x` m/s、`angular.z` rad/s。持续发送时戳递增的新指令，0.25 秒过期。可用任务源接管时撤销旧导航权限。 |
-| `/ugv/actuators/servo` | `slicer_interfaces/Servo` | C30D 通道 1，脉宽 500–2500 μs。应答只确认协议回执。 |
+| 名称 | 类型 | 调用及功能 | 结果与取消 |
+| --- | --- | --- | --- |
+| `/ugv/navigate` | `slicer_interfaces/NavigateToPointAction` | 发送本地 `map` 或 WGS84 目标。首个 WGS84 目标可触发配准准备。 | `SUCCEEDED`、`code=SUCCESS` 且 `stop_valid`、`stopped` 均为真表示到点停稳。取消本目标并等终态。失败读 `code`、`reason`。 |
+| `/ugv/status` | `slicer_interfaces/UgvStatus` | 订阅约 10 Hz 的车辆状态，含地图位姿、速度、GNSS、配准、当前目标及底盘控制状态。 | 用有效位和对应观测时间判断数据可用性。`last_goal_id`、`last_result_code` 描述最近终态。 |
+| `/ugv/control/hold`、`/ugv/control/release` | `slicer_interfaces/Control` | 空请求。Hold 抑制自主与任务运动，Release 解除 Hold。解除后等待新鲜状态显示 `hold=false`、`base_online=true`。 | 读 `accepted` 和 `reason`。旧任务需重发，急停独立处理。 |
+| `/ugv/cmd_vel/mission` | `geometry_msgs/TwistStamped` | 视觉等任务节点向常驻 Mux 发布 `base_link` 指令。`linear.x` 为 m/s，`angular.z` 为 rad/s，时间戳用本机 ROS 时间并递增。 | Mux 接受任务流时收回旧导航权。停发后指令在 0.25 秒内过期并归还任务速度权。BT 调抓取 Action 时由视觉节点管理该 Topic。 |
+| `/ugv/actuators/servo` | `slicer_interfaces/Servo` | 调用 C30D 通道 1，脉宽 500–2500 µs。视觉节点负责抓取流程中的升降。 | 读 `accepted`、`acknowledged` 和 `reason`。应答确认的是协议回执。 |
+| `/ugv/grasp` | `slicer_visual_grasp/GraspAction` | 发送 `command=1`（`PICK`）执行视觉对位及抓取，或 `command=2`（`RELEASE`）执行释放及按记录回升。 | `SUCCEEDED` 且 `success=true` 表示完成。失败读 `message`，需恢复或仍持物时读 `needs_release`。取消运行中的本目标，等待 `PREEMPTED` 及新的停稳状态。 |
 
-## 目标和状态
+## 导航目标和状态
 
-- 如果客户端先调用 Release，应等待新鲜的 `/ugv/status` 显示 `hold=false`、`base_online=true` 后再发目标。服务响应与状态广播异步。
-
-- `LOCAL_POSE=1` 使用 `local_target`，只接受 `map`，位置单位 m。时间戳填零表示使用固定会话参考系中的指定点，也可填近 5 秒内的 ROS 时间。指定 `has_yaw` 时从四元数读航向。
-- `WGS84=2` 使用十进制度经纬度。椭球高单位 m，省略时采用会话参考平面。可选 `yaw_enu_rad` 为正东零、逆时针正。在 `has_yaw=false` 时不强加绝对终点航向。地理目标表示车体 `base_link` 原点的地面停车位置。
-- `xy_tolerance_m`、`yaw_tolerance_rad`、`timeout` 填零使用服务端默认值（0.20 m、0.30 rad、120 s）。WGS84 设 `require_geographic_verification` 后要求独立的本次 GNSS 到点复核。
-- `gnss_stamp` 是接收机适配节点为该 NMEA 观测记录的主机 ROS 接收时间，`gnss_received_stamp` 是导航侧收到该观测的 ROS 时间。原始 GGA/GST 的 UTC 历元用于同历元筛选，当前串口源无法给出已校正的卫星测量延迟。
-- Feedback 带 GoalID 与 `PREPARING`、`PLANNING`、`NAVIGATING`、`VERIFYING`、`STOPPING`。剩余距离、速度、投影目标各有有效位。投影携带 `transform_version`。
-- 合法新目标可直接替换当前目标。无效目标只拒绝自身。取消用各自的 GoalHandle。接受新目标后，旧取消与旧结果不会撤销新目标。普通客户端断连没有可靠取消语义。
-- 成功包含停稳确认。处理取消时先抑制该目标输出，再在有界时间内确认停车。替换与人工接管释放旧目标输出权，后续来源可接手。结果中的 `stop_commanded`、`stop_valid` 和 `stopped` 分别表示已抑制目标输出、停车观测是否有效及车体是否停稳。误差仅在对应有效位为真时使用，来源见 `error_source`。
+- 本地目标 `LOCAL_POSE=1` 使用 `local_target`，参考系为 `map`，单位为米。时间戳可填零或近 5 秒内的 ROS 时间。`has_yaw=true` 时从四元数读航向。
+- 地理目标 `WGS84=2` 使用十进制度经纬度，表示 `base_link` 原点的地面停车点。可选椭球高单位为米，可选 `yaw_enu_rad` 从正东起逆时针计。`require_geographic_verification=true` 时做本次停稳 RTK 到点复核。
+- `xy_tolerance_m`、`yaw_tolerance_rad`、`timeout` 填零时默认分别为 0.20 m、0.30 rad、120 s。反馈含 GoalID、阶段、剩余距离、速度与目标投影。有有效位时才使用对应数据，投影的 `transform_version` 表示其配准版本。`gnss_stamp` 为接收机适配节点的 ROS 接收时间，`gnss_received_stamp` 为导航侧收到该观测的 ROS 时间。
+- 合法新导航目标可替换旧目标。用各自 GoalHandle 取消，旧取消不会撤销新目标。`stop_commanded` 表示已确认停止该目标输出权，`stop_valid` 表示停车观测有效，`stopped` 表示实测停稳。误差仅在对应有效位为真时使用，来源见 `error_source`。客户端断连时应从 `/ugv/status` 核对当前任务和停稳。
 
 | Code | 含义 |
 | --- | --- |
@@ -40,9 +36,19 @@ ROS1 Noetic。BT 使用新导航仓库的 `slicer_interfaces` 消息与下表公
 | 13 `STOP_NOT_CONFIRMED` | 停车确认超时 |
 | 14 `HELD` | 控制锁抑制任务 |
 
-## Python 客户端示例
+## 抓取与控制权交接
 
-进入封存目录，加载 `install/setup.bash`。在 mock 或现场确认 Release 状态后执行下面的本地示例，或在设置十进制度的 `TARGET_LATITUDE`、`TARGET_LONGITUDE` 后执行 WGS84 示例。
+1. 导航到点，或取消导航并等待终态和实测停稳。发抓取目标前确认底盘在线、无人接管、Release 生效且没有活动导航目标。逐个发送抓取或释放目标。
+2. 视觉节点通过 `/ugv/cmd_vel/mission` 和 `/ugv/actuators/servo` 接管任务动作。底盘驱动、Mux 和 Guard 在整个过程中保持运行。`PICK` 成功时 `needs_release=true` 表示保留吸附。失败或取消且 `needs_release=true` 时先处理持物或恢复，再决定后续动作。
+3. 视觉任务结束时清零并退出任务速度流。继续导航前等待新鲜的 `/ugv/status` 显示 `stop_valid=true`、`stopped=true`、`active_velocity_source=zero`，且 `goal_id`、`nav_goal_id` 为空。收到导航的 `STOP_NOT_CONFIRMED` 或缺失结果时，先核对车辆和任务状态。
+
+现场 UI 从 Action 生命周期、终态 `message` 和 `needs_release` 显示结果。视觉节点日志包含更详细的失败原因。相机预览、识别结果和细分进度待视觉组提供对应 ROS 接口。
+
+## 配置与调用示例
+
+在使用中的导航发布目录加载 `install/setup.bash`。视觉节点在同一 ROS Master 单独启动，安装时使用同一导航发布的 `slicer_interfaces`，例如在视觉工作区用 `SLICER_NAV_INSTALL=/path/to/navigation/install ./tools/build.sh -j2` 构建。启动节点时加载视觉安装环境，再运行 `roslaunch slicer_visual_grasp visual_grasp.launch`。从日常导航工作区打开带视觉入口的 UI 可以运行 `SLICER_GRASP_INSTALL=/path/to/slicer-visual-grasp/install ./current/run ui`。
+
+单次导航示例覆盖本地与地理目标。以下经纬度变量需事先设为现场十进制度坐标。
 
 ```bash
 source install/setup.bash
@@ -50,4 +56,14 @@ source install/setup.bash
 /usr/bin/python3 docs/examples/navigate.py wgs84 "$TARGET_LATITUDE" "$TARGET_LONGITUDE"
 ```
 
-示例只调用 Action，Ctrl+C 取消本次 GoalHandle 并等待停车结果。终态以 JSON 输出。退出码 `0` 表示到点并实测停稳，`130` 表示取消并实测停稳，`1` 表示其余结果或未收到终态。执行 BT 时按 GoalHandle 关联本节点的反馈和终态，收到 `REPLACED` 后按当前任务处理，收到 `STOP_NOT_CONFIRMED` 时从 `/ugv/status` 核对车辆状态。
+组合示例按顺序执行导航到点、抓取、在同一地点释放、确认底盘空闲停稳及继续导航。现场用事先确认的两组 `map` 坐标。执行需要车端已处于 Release 状态，由一个任务执行流负责。
+
+```bash
+source /path/to/slicer-visual-grasp/install/setup.bash
+source install/setup.bash --extend
+/usr/bin/python3 docs/examples/nav_grasp_nav.py "$PICK_X" "$PICK_Y" "$NEXT_X" "$NEXT_Y"
+```
+
+两个示例以 JSON 输出终态，Ctrl+C 仅取消当前调用的 GoalHandle。组合示例在失败、超时或未确认停稳时停止流程，并在视觉终态保留 `needs_release`。
+
+在独立 ROS Master 下用 `roslaunch slicer_bringup ugv_mock.launch` 联调导航。联调组合示例时，在 Mock 终端也加载视觉安装环境，用 `roslaunch slicer_bringup ugv_mock.launch vision:=true` 启动模拟抓取端点。

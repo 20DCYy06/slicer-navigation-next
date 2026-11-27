@@ -11,11 +11,17 @@ from tkinter import ttk
 
 import actionlib
 import rospy
+from actionlib_msgs.msg import GoalStatus, GoalStatusArray
 from slicer_interfaces.msg import (
     NavigateToPointAction, NavigateToPointFeedback as Feedback,
     NavigateToPointGoal as Goal, NavigateToPointResult as Result, UgvStatus,
 )
 from slicer_interfaces.srv import Control
+
+try:
+    from slicer_visual_grasp.msg import GraspAction, GraspGoal
+except ImportError:
+    GraspAction = GraspGoal = None
 
 
 PHASES = {
@@ -46,6 +52,94 @@ def result_text(action_status, result):
     if result.position_error_valid:
         parts.append(f"位置误差 {result.position_error_m:.2f} m ({result.error_source})")
     return " · ".join(parts)
+
+
+def grasp_result_text(state, result):
+    if result is None or state == GoalStatus.LOST:
+        return "视觉终态未知 · 请核对持物与停车状态"
+    if state in (GoalStatus.PREEMPTED, GoalStatus.RECALLED):
+        outcome = "已取消"
+    elif state == GoalStatus.SUCCEEDED and result.success:
+        outcome = "成功"
+    else:
+        outcome = "失败"
+    recovery = "需要释放或恢复" if result.needs_release else "无需释放或恢复"
+    return " · ".join(filter(None, (outcome, result.message, recovery)))
+
+
+def fresh(stamp, limit=0.5):
+    return not stamp.is_zero() and 0 <= (rospy.Time.now() - stamp).to_sec() <= limit
+
+
+class GraspPanel(ttk.LabelFrame):
+    busy_states = {GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.PREEMPTING, GoalStatus.RECALLING}
+
+    def __init__(self, parent, events):
+        super().__init__(parent, text="视觉伺服", padding=6)
+        self.client = actionlib.SimpleActionClient("/ugv/grasp", GraspAction) if GraspAction else None
+        self.events = events
+        self.connected = False
+        self.server_status = None
+        self.active = False
+        self.cancel_pending = False
+        self.state = tk.StringVar(value="等待视觉节点" if self.client else "未加载视觉消息包")
+        self.details = tk.StringVar()
+        self.pick_button = ttk.Button(self, text="启动抓取", command=lambda: self.send(self.pick_button, GraspGoal.PICK))
+        self.release_button = ttk.Button(self, text="释放", command=lambda: self.send(self.release_button, GraspGoal.RELEASE))
+        self.cancel_button = ttk.Button(self, text="取消本动作", command=self.cancel)
+        for column, button in enumerate((self.pick_button, self.release_button, self.cancel_button)):
+            button.grid(row=0, column=column, sticky="w", padx=3)
+            button.state(["disabled"])
+        for row, variable in enumerate((self.state, self.details), 1):
+            ttk.Label(self, textvariable=variable, wraplength=590, justify="left").grid(
+                row=row, column=0, columnspan=3, sticky="w", pady=2
+            )
+        if self.client is not None:
+            self.subscriber = rospy.Subscriber(
+                "/ugv/grasp/status", GoalStatusArray,
+                lambda message: events.put(("grasp_status", message)), queue_size=1,
+            )
+            Thread(target=self.wait_for_action, daemon=True).start()
+
+    def wait_for_action(self):
+        while not rospy.is_shutdown():
+            if self.client.wait_for_server(rospy.Duration(1.0)):
+                self.events.put(("grasp_connected", None))
+                return
+
+    def update(self, base_ready):
+        available = self.connected and self.server_status is not None and fresh(self.server_status.header.stamp, 1.0)
+        remote_busy = available and any(item.status in self.busy_states for item in self.server_status.status_list)
+        occupied = self.active or remote_busy
+        if self.client is not None:
+            if not available:
+                self.state.set("视觉连接中断，终态待确认" if self.active else "等待视觉节点")
+            else:
+                self.state.set("视觉动作执行中" if occupied else "视觉待命")
+        for button in (self.pick_button, self.release_button):
+            button.state(["!disabled" if available and not occupied and base_ready else "disabled"])
+        self.cancel_button.state(["!disabled" if self.active and not self.cancel_pending else "disabled"])
+        return occupied
+
+    def send(self, button, command):
+        if self.active or not button.instate(["!disabled"]):
+            return
+        self.active, self.cancel_pending = True, False
+        self.details.set("已发送视觉动作，等待结果")
+        self.update(False)
+        self.client.send_goal(GraspGoal(command=command),
+                              done_cb=lambda state, result: self.events.put(("grasp_result", (state, result))))
+
+    def cancel(self):
+        if self.active and not self.cancel_pending:
+            self.cancel_pending = True
+            self.client.cancel_goal()
+            self.details.set("已请求取消，等待视觉终态")
+            self.update(False)
+
+    def finish(self, state, result):
+        self.active, self.cancel_pending = False, False
+        self.details.set(grasp_result_text(state, result))
 
 
 def target(mode, first, second, altitude, yaw, verify):
@@ -89,6 +183,7 @@ class Operator:
         self.preview = None
         self.recorder = None
         self.last_status = rospy.Time()
+        self.base = None
         self.motion_available = False
         self.last_displayed_result = ""
         self.record_path = ""
@@ -148,6 +243,8 @@ class Operator:
         )
         self.record_button = ttk.Button(panel, text="开始录包", command=self.record)
         self.record_button.grid(row=8, column=1, sticky="ew", padx=3)
+        self.grasp = GraspPanel(panel, self.events)
+        self.grasp.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         self.cancel_button.state(["disabled"])
 
     def wait_for_action(self):
@@ -157,12 +254,16 @@ class Operator:
                 return
 
     def update_buttons(self):
-        fresh = not self.last_status.is_zero() and 0 <= (
-            rospy.Time.now() - self.last_status
-        ).to_sec() <= 0.5
+        ready = fresh(self.last_status) and self.motion_available
+        base = self.base
+        grasp_busy = self.grasp.update(
+            ready and not self.active and base is not None and base.stop_valid and base.stopped
+            and base.velocity_valid and fresh(base.velocity.header.stamp, 0.45)
+            and not base.goal_id and not base.nav_goal_id and base.active_velocity_source == "zero"
+        )
         enabled = (
             self.preview is not None and self.connected and not self.active
-            and fresh and self.motion_available
+            and ready and not grasp_busy and base.active_velocity_source != "mission"
         )
         self.send_button.state(["!disabled" if enabled else "disabled"])
         self.cancel_button.state(["!disabled" if self.active else "disabled"])
@@ -249,6 +350,7 @@ class Operator:
         self.events.put(("recorded", process.wait()))
 
     def show_status(self, status):
+        self.base = status
         self.last_status = status.header.stamp
         blocked = status.hold or status.estop or status.manual_override
         self.motion_available = status.base_online and not blocked
@@ -296,6 +398,12 @@ class Operator:
             elif event == "result":
                 self.active = False
                 self.details.set(result_text(*value))
+            elif event == "grasp_connected":
+                self.grasp.connected = True
+            elif event == "grasp_status":
+                self.grasp.server_status = value
+            elif event == "grasp_result":
+                self.grasp.finish(*value)
             elif event == "control":
                 self.details.set(value)
             elif event == "recording":
@@ -315,6 +423,7 @@ class Operator:
 
     def close(self):
         self.cancel()
+        self.grasp.cancel()
         if self.recorder is not None and self.recorder.poll() is None:
             os.killpg(self.recorder.pid, signal.SIGINT)
         self.root.destroy()

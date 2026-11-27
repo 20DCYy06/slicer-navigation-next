@@ -37,6 +37,20 @@ cd /home/ugv/workspace/slicer-navigation-next
 4. 停稳后点击「结束录包」，等界面显示保存成功。默认目录为 `~/.local/share/slicer/field-data/`，
    每次运行包含 bag、有效运动配置和发布标识。退出界面后，在车端终端用 Ctrl+C 停栈。
 
+## 视觉伺服
+
+采用视觉组提供的独立安装，两边使用同一 ROS Master。先运行导航车端，再在另一终端加载导航与视觉安装并启动视觉节点。
+
+```bash
+NAV="$HOME/workspace/slicer-navigation-next"
+GRASP="$HOME/workspace/slicer-visual-grasp/install"
+source "$GRASP/setup.bash"
+source "$NAV/current/install/setup.bash" --extend
+roslaunch slicer_visual_grasp visual_grasp.launch
+```
+
+在桌面终端用 `SLICER_GRASP_INSTALL="$HOME/workspace/slicer-visual-grasp/install" ./current/run ui` 启动界面。导航到点或取消后，等停稳并解除 Hold，再用「启动抓取」、「释放」或「取消本动作」。视觉终态的持物恢复提示由现场人员处理。等底盘停稳、速度源归零后可以继续导航。接口和顺序调用见 [BT 接入说明](INTERFACE.md)。
+
 ## 配套与回退
 
 | 组件 | V1.10 配套版本 |

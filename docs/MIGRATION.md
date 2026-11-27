@@ -4,6 +4,7 @@
 
 - 团队仓库为 [20DCYy06/slicer-navigation-next](https://github.com/20DCYy06/slicer-navigation-next)。Jetson 日常导航工作区为 `/home/ugv/workspace/slicer-navigation-next`，车端和界面从 `./current/run`、`./current/run ui` 启动。旧工作区入口保留用于历史和 V1.9 成套回退。
 - 首发以 `94ecf19` 为运行基线。与 `37c2033` 的差异仅为本记录。`performance/wgs84-dwa-170` 保留封存候选 `b0633df`。其规划优化已在 0.20 m/s 长直线、双挡板和行进换点实车验收后合入 `main`。接下来的导航性能开发在此工作区和仓库进行。
+- 四个完成使命的导航工作树已由 Git 移至本地 `slicer/archive/completed-dev/navigation-next-20261127/`，原分支、提交、录包和依赖检出均保留。独立固件、视觉工程、历史发布和旧任务工程留在各自原址。
 
 ## 车端基线
 
@@ -265,7 +266,7 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 ### DWA 性能候选
 
 - 用安装的 ROS DWA 对实车录包重算。35 个准备慢行快照中，34 个重现原前向指令至 0.005 m/s，32 个有评分完全相同的更快有效轨迹。延长预测时长可增加低速轨迹在栅格上的可分辨程度。仅将 `sim_time` 从 1.05 s 改到 1.70 s，准备慢行与绕障转弯的指令速度中位数均从约 0.021 m/s 提到约 0.035 m/s，开放 0.20 m/s 样本的中位数保持约 0.152 m/s。
-- 同期限的闭环模拟中，开阔 WGS84 在 40 s 内由超时改为 34.142 s 停稳到点。完整箱体在 150 s 期限下由 117.681 s 降至 67.846 s，均零接触且通过停稳地理复核。候选最小模拟足迹净距 0.238 m，原版 0.173 m。证据 `/home/ugv/workspace/slicer-navigation-dwa/field-data/dwa-performance/summary.txt`。
+- 同期限的闭环模拟中，开阔 WGS84 在 40 s 内由超时改为 34.142 s 停稳到点。完整箱体在 150 s 期限下由 117.681 s 降至 67.846 s，均零接触且通过停稳地理复核。候选最小模拟足迹净距 0.238 m，原版 0.173 m。证据 `slicer/archive/completed-dev/navigation-next-20261127/slicer-navigation-dwa/field-data/dwa-performance/summary.txt`（相对 Jetson 工作区）。
 - `candidate-dwa-horizon-170` 单独封存 `0e44bca`，安装参数读回仅预测时长为 1.70 s。交付候选默认保持已实车使用的 1.05 s。当前未实车验证 1.70 s。
 
 ### V1.10 交付入口与 BT/UI 联调

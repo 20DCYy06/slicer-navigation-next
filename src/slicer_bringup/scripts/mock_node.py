@@ -57,6 +57,8 @@ class Mock:
         self.events = deque()
         self.lock = Lock()
         self.active = None
+        self.grasp = None
+        self.needs_release = False
         self.started = rospy.Time()
         self.last_fix = rospy.Time()
         self.last_result = None
@@ -76,6 +78,19 @@ class Mock:
             lambda handle: self.enqueue("cancel", handle),
             auto_start=False,
         )
+        if rospy.get_param("~vision", False):
+            try:
+                from slicer_visual_grasp.msg import GraspAction, GraspResult
+            except ImportError as error:
+                raise RuntimeError("vision:=true requires the slicer_visual_grasp ROS overlay") from error
+            self.grasp_result = GraspResult
+            self.grasp_server = actionlib.ActionServer(
+                "/ugv/grasp", GraspAction,
+                lambda handle: self.enqueue("grasp_goal", handle),
+                lambda handle: self.enqueue("grasp_cancel", handle),
+                auto_start=False,
+            )
+            self.grasp_server.start()
         self.server.start()
         rospy.Service("/ugv/control/hold", Control, self.on_hold)
         rospy.Service("/ugv/control/release", Control, self.on_release)
@@ -111,10 +126,33 @@ class Mock:
 
     def on_mission(self, msg):
         with self.lock:
-            if not (self.hold or self.estop or self.manual or self.active or self.events):
+            if not (self.hold or self.estop or self.manual or self.active or self.grasp or self.events):
                 age = (rospy.Time.now() - msg.header.stamp).to_sec()
                 if 0.0 <= age <= 0.25:
                     self.mission = msg
+
+    def finish_grasp(self, handle, terminal, reason, success=False):
+        result = self.grasp_result(success=success, needs_release=self.needs_release, message=reason)
+        getattr(handle, terminal)(result, reason)
+
+    def start_grasp(self, handle, now):
+        goal = handle.get_goal()
+        handle.set_accepted("Mock 已接受视觉目标")
+        with self.lock:
+            busy = (self.mission is not None and
+                    0 <= (now - self.mission.header.stamp).to_sec() <= .25)
+            if goal.command not in (goal.PICK, goal.RELEASE):
+                reason = "Mock 未知抓取指令"
+            elif self.hold or self.estop or self.manual or not self.stop_confirmed:
+                reason = "Mock 底盘未就绪"
+            elif self.active or self.grasp or busy:
+                reason = "Mock 底盘控制权已被占用"
+            elif goal.command == goal.PICK and self.needs_release:
+                reason = "Mock 需要先释放"
+            else:
+                self.grasp = (handle, now)
+                return
+        self.finish_grasp(handle, "set_aborted", reason)
 
     def finish(self, handle, code, reason, now, terminal, stop_commanded=False,
                stop_valid=True, stopped=True, update_last=True):
@@ -144,6 +182,17 @@ class Mock:
                 if self.active is not None:
                     self.finish(self.active, Result.HELD, "Mock hold", now, "set_aborted", True)
                     self.active = None
+                if self.grasp is not None:
+                    self.finish_grasp(self.grasp[0], "set_aborted", "Mock 底盘已驻车")
+                    self.grasp = None
+                continue
+            if event == "grasp_goal":
+                self.start_grasp(handle, now)
+                continue
+            if event == "grasp_cancel":
+                if self.grasp and handle.get_goal_id().id == self.grasp[0].get_goal_id().id:
+                    self.finish_grasp(self.grasp[0], "set_canceled", "Mock 抓取任务已取消")
+                    self.grasp = None
                 continue
             if event == "cancel":
                 if self.active and handle.get_goal_id().id == self.active.get_goal_id().id:
@@ -159,12 +208,13 @@ class Mock:
 
             reason = validate(handle.get_goal())
             with self.lock:
-                blocked = self.estop or self.manual or self.hold
+                blocked = self.estop or self.manual or self.hold or self.grasp is not None
             if reason or blocked:
                 code = Result.INVALID_GOAL if reason else (
                     Result.ESTOP if self.estop else Result.MANUAL_OVERRIDE if self.manual else Result.HELD
                 )
-                self.finish(handle, code, reason or "Mock 控制已锁定", now, "set_rejected",
+                blocked_reason = "Mock 视觉任务占用控制权" if self.grasp else "Mock 控制已锁定"
+                self.finish(handle, code, reason or blocked_reason, now, "set_rejected",
                             stop_valid=False, stopped=False, update_last=False)
                 continue
             if self.active:
@@ -222,6 +272,13 @@ class Mock:
                     feedback.projected_target = goal.local_target
                     feedback.projected_target_valid = True
                 self.active.publish_feedback(feedback)
+        if self.grasp and (now - self.grasp[1]).to_sec() >= 1.0:
+            handle, _ = self.grasp
+            goal = handle.get_goal()
+            self.needs_release = goal.command == goal.PICK
+            reason = "Mock 抓取完成" if self.needs_release else "Mock 释放完成"
+            self.finish_grasp(handle, "set_succeeded", reason, success=True)
+            self.grasp = None
         self.publish_status(now, phase)
 
     def publish_status(self, now, phase):
@@ -238,10 +295,11 @@ class Mock:
             status.estop = self.estop
             status.control_epoch = self.control_epoch
         moving = mission is not None and 0 <= (now - mission.header.stamp).to_sec() <= 0.25
-        status.stopped = status.stop_valid and not moving and self.active is None
+        status.stopped = status.stop_valid and not moving and self.active is None and self.grasp is None
         status.velocity_valid = status.stop_valid
         status.velocity.header.stamp = now
         status.velocity.header.frame_id = "base_link"
+        status.active_velocity_source = "zero"
         if moving:
             status.active_velocity_source = "mission"
             status.velocity = mission
@@ -249,7 +307,9 @@ class Mock:
             status.goal_id = self.active.get_goal_id().id
             status.nav_goal_id = status.goal_id
             status.phase = phase
-            status.active_velocity_source = "navigation"
+            status.active_velocity_source = "nav"
+        elif self.grasp is not None:
+            status.active_velocity_source = "mission"
         if not (self.scenario == "gnss_loss" and
                 not self.started.is_zero() and (now - self.started).to_sec() >= 0.8):
             status.gnss_valid = True
