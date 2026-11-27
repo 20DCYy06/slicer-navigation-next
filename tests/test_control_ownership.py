@@ -15,11 +15,26 @@ from slicer_base.velocity_mux import VelocityMux
 def online_mux():
     mux = VelocityMux(timeout=0.25)
     mux.set_online(True, 1.0)
-    assert mux.release(1.01)[0]
     return mux
 
 
 class ControlOwnership(unittest.TestCase):
+    def test_startup_accepts_fresh_authorized_motion_after_base_online(self):
+        mux = VelocityMux(timeout=0.25)
+        previous_epoch = mux.epoch
+        assert mux.select(0.9) == ('zero', (0.0, 0.0))
+        assert not mux.authorize('new', True, previous_epoch, 0.9, 9.9)[0]
+
+        mux.set_online(True, 1.0, 10.0)
+        assert mux.select(1.01) == ('zero', (0.0, 0.0))
+        assert not mux.command('mission', (0.2, 0.0), 1.01, 1.01, 9.99, 10.01)
+        assert not mux.command('nav', (0.2, 0.0), 1.01, 1.01, 10.01, 10.01, 'new')
+        assert not mux.authorize('new', True, previous_epoch, 1.02, 10.02)[0]
+
+        assert mux.authorize('new', True, mux.epoch, 1.02, 10.02)[0]
+        assert mux.command('nav', (0.2, 0.0), 1.03, 1.03, 10.03, 10.03, 'new')
+        assert mux.select(1.04) == ('nav', (0.2, 0.0))
+
     def test_hold_and_release_discard_cached_commands_and_reject_previous_epoch(self):
         mux = online_mux()
         old = mux.epoch

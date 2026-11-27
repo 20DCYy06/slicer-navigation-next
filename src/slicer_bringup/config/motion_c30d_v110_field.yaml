@@ -1,9 +1,9 @@
-# Retain the physical range of the v1.9 low-speed tests on the v1.10 SLC2 scale.
-max_linear_mps: 0.10
+# V1.10 field cruise speed and Guard braking limits.
+max_linear_mps: 0.80
 max_angular_rps: 0.45
-linear_acceleration_mps2: 0.20
+linear_acceleration_mps2: 0.45
 angular_acceleration_rps2: 1.0
-linear_braking_mps2: 0.10
+linear_braking_mps2: 0.45
 min_navigation_linear_mps: 0.0175
 footprint: [[-0.145, -0.14], [0.2, -0.14], [0.2, 0.14], [-0.145, 0.14]]
 stop_linear_mps: 0.01

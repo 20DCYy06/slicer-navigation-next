@@ -6,6 +6,8 @@
     <node if="$(arg start_move_base)" pkg="slicer_navigation" type="run_move_base.py"
           name="move_base" output="screen" clear_params="true">
       <remap from="cmd_vel" to="move_base/unrouted_cmd_vel"/>
+      <!-- Noetic's DWA stop controller reads this key from the move_base node. -->
+      <remap from="~latch_xy_goal_tolerance" to="~DWAPlannerROS/latch_xy_goal_tolerance"/>
       <rosparam command="load" file="$(find slicer_navigation)/config/planner.yaml"/>
       <rosparam command="load" file="$(find slicer_navigation)/config/costmaps.yaml"/>
     </node>

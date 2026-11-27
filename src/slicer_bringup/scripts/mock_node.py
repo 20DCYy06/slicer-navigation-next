@@ -65,7 +65,7 @@ class Mock:
         self.started = rospy.Time()
         self.last_fix = rospy.Time()
         self.last_result = None
-        self.hold = True
+        self.hold = False
         self.estop = False
         self.manual = False
         self.control_epoch = 0

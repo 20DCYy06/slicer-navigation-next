@@ -4,9 +4,9 @@ Visualization Manager:
     - Class: rviz/Grid
       Name: 地面网格
       Enabled: true
-      Alpha: 0.45
+      Alpha: 0.38
       Cell Size: 0.5
-      Color: 99; 139; 161
+      Color: 105; 128; 148
       Plane Cell Count: 80
       Reference Frame: <Fixed Frame>
     - Class: rviz/Map
@@ -40,18 +40,20 @@ Visualization Manager:
       Alpha: 0.95
       Shape: Arrow
   Global Options:
-    Background Color: 18; 34; 48
+    Background Color: 22; 33; 45
     Fixed Frame: map
     Frame Rate: 18
   Tools:
     - Class: rviz/MoveCamera
     - Class: rviz/SetGoal
       Topic: /slicer_operator_ui/map_point
+    - Class: rviz/SetGoal
+      Topic: /slicer_operator_ui/waypoint_point
   Views:
     Current:
       Class: rviz/TopDownOrtho
       Angle: 0
-      Scale: 55
+      Scale: 40
       Target Frame: <Fixed Frame>
       X: 0
       Y: 0

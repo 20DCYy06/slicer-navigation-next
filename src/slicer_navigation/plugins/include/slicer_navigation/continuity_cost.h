@@ -146,6 +146,18 @@ inline std::vector<std::uint8_t> hardContinuityMask(const std::uint8_t* measured
   return hard;
 }
 
+template<class Exclude>
+inline void maskRouteRegion(std::vector<std::uint8_t>& hard, int width, int height,
+                            double resolution, Point2 origin, Exclude exclude) {
+  for (int y = 0; y < height; ++y) {
+    const double cy = continuity_detail::center(y, origin.y, resolution);
+    for (int x = 0; x < width; ++x) {
+      const double cx = continuity_detail::center(x, origin.x, resolution);
+      if (exclude(Point2{cx, cy})) hard[static_cast<std::size_t>(y) * width + x] = 1;
+    }
+  }
+}
+
 // Add a soft shoulder around measured lethal cells. The source scan's
 // inflation band can be narrower than a full-footprint planning envelope.
 inline void preferObstacleDistance(const std::uint8_t* measured, std::uint8_t* costs,

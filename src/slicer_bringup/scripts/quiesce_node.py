@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Cancel live public actions and check post-Hold brake feedback before a service stop."""
+"""Cancel live public actions and confirm a fresh measured stop before a service change."""
 
+import argparse
 from collections import deque
 import sys
 import time
@@ -46,7 +47,7 @@ class Action:
             self.cancel.publish(GoalID(id=goal_id))
 
 
-def quiesce():
+def quiesce(hold):
     deadline = time.monotonic() + 8
     states = deque(maxlen=1)
     status_subscriber = rospy.Subscriber("/ugv/status", UgvStatus, states.append, queue_size=1)
@@ -67,31 +68,40 @@ def quiesce():
                deadline, "an active action has no reachable cancel endpoint")
     navigation.cancel_goals(nav_goals)
     vision.cancel_goals(vision_goals)
-    rospy.wait_for_service("/ugv/control/hold", timeout=max(.1, deadline - time.monotonic()))
-    result = rospy.ServiceProxy("/ugv/control/hold", Control)()
-    if not result.accepted:
-        raise RuntimeError("Hold was refused: " + result.reason)
-    held_at = rospy.Time.now()
+    if hold:
+        rospy.wait_for_service("/ugv/control/hold", timeout=max(.1, deadline - time.monotonic()))
+        result = rospy.ServiceProxy("/ugv/control/hold", Control)()
+        if not result.accepted:
+            raise RuntimeError("Hold was refused: " + result.reason)
+    requested_at = rospy.Time.now()
 
     def confirmed():
         navigation.cancel_goals(navigation.active())
         vision.cancel_goals(vision.active())
         status = states[-1]
         now = rospy.Time.now()
-        return (fresh(status.header.stamp, now) and status.hold and status.stop_valid and status.stopped
+        return (fresh(status.header.stamp, now) and (not hold or status.hold)
+                and status.stop_valid and status.stopped
                 and status.velocity_valid and fresh(status.velocity.header.stamp, now)
-                and status.velocity.header.stamp > held_at and status.active_velocity_source == "zero"
+                and status.velocity.header.stamp > requested_at and status.active_velocity_source == "zero"
                 and not (status.goal_id or status.nav_goal_id or navigation.active() or vision.active()))
 
-    wait_until(confirmed, deadline, "no fresh measured stop with Hold and inactive actions")
+    failure = "no fresh measured stop with inactive actions"
+    if hold:
+        failure += " and Hold"
+    wait_until(confirmed, deadline, failure)
     status_subscriber.unregister()
-    print("Hold and fresh measured stop confirmed.")
+    print("Hold and fresh measured stop confirmed." if hold else "Fresh measured stop confirmed.")
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-hold", action="store_false", dest="hold",
+                        help="leave Hold unchanged when the base service stays active")
+    options = parser.parse_args(rospy.myargv()[1:])
     rospy.init_node("slicer_service_quiesce", anonymous=True)
     try:
-        quiesce()
+        quiesce(options.hold)
     except (RuntimeError, rospy.ROSException, rospy.ServiceException) as error:
         print(f"Service change refused: {error}", file=sys.stderr)
         return 1

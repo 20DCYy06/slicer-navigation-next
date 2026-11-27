@@ -53,28 +53,34 @@ class SideHysteresis {
     side_ = 0;
   }
   int side() const { return side_; }
-  bool keep(const std::vector<Point2>& candidate, double old_length) const {
-    const int proposed = classify(candidate);
-    return side_ && proposed == -side_ && routeLength(candidate) >= .75 * old_length;
+  bool opposes(const std::vector<Point2>& candidate) const {
+    return side_ && classify(candidate) == -side_;
+  }
+  bool oppositeRegion(Point2 point) const {
+    return side_ && side_ * lateralOffset(point) < -.25;
   }
   void accept(const std::vector<Point2>& candidate) {
     const int proposed = classify(candidate);
     if (proposed) side_ = proposed;
   }
 
- private:
   int classify(const std::vector<Point2>& path) const {
-    const double length = norm(axis_);
-    if (length < .5) return 0;
     double signed_offset = 0.;
-    for (const auto& p : path) {
-      const auto offset = p - start_;
-      const double fraction = (axis_.x*offset.x + axis_.y*offset.y) / (length*length);
-      if (fraction < .1 || fraction > .9) continue;
-      const double cross = (axis_.x*offset.y - axis_.y*offset.x) / length;
+    for (const auto& point : path) {
+      const double cross = lateralOffset(point);
       if (std::abs(cross) > std::abs(signed_offset)) signed_offset = cross;
     }
     return signed_offset > .25 ? 1 : signed_offset < -.25 ? -1 : 0;
+  }
+
+ private:
+  double lateralOffset(Point2 point) const {
+    const double length = norm(axis_);
+    if (length < .5) return 0.;
+    const auto offset = point - start_;
+    const double fraction = dot(axis_, offset) / (length * length);
+    if (fraction < .1 || fraction > .9) return 0.;
+    return (axis_.x * offset.y - axis_.y * offset.x) / length;
   }
 
   Point2 start_{}, axis_{};

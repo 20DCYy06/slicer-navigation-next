@@ -45,8 +45,8 @@ DWAPlannerROS:
   min_vel_y: 0.0
   acc_lim_y: 0.0
   xy_goal_tolerance: 0.20
-  yaw_goal_tolerance: 0.30
-  latch_xy_goal_tolerance: false
+  yaw_goal_tolerance: 3.15
+  latch_xy_goal_tolerance: true
   # Let low-speed samples cover enough of the grid to distinguish progress.
   sim_time: 1.70
   sim_granularity: 0.025

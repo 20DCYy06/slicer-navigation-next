@@ -18,11 +18,11 @@ using HeadingPoint = std::pair<double, double>;
 
 constexpr double kHeadingPi = 3.14159265358979323846;
 
-// Start at the closest projection on the path and find its first exit from
-// the lookahead circle. A short path uses its last point.
-template<class Iter, class Position>
+// Start at the closest projection and advance by arc length along the path.
+// Report the traversed prefix in coordinates relative to the vehicle.
+template<class Iter, class Position, class Sample>
 double pathLookaheadChord(Iter begin, Iter end, Position position,
-                          HeadingPoint center, double lookahead) {
+                          HeadingPoint center, double lookahead, Sample sample) {
   const double invalid = std::numeric_limits<double>::quiet_NaN();
   if (begin == end) return invalid;
   const auto relative = [&](const auto& pose) {
@@ -57,58 +57,28 @@ double pathLookaheadChord(Iter begin, Iter end, Position position,
     previous = point;
   }
 
-  const double radius_sq = lookahead*lookahead;
-  if (dot(closest, closest) > radius_sq) return invalid;
+  if (dot(closest, closest) > lookahead*lookahead) return invalid;
   auto endpoint = closest;
-  for (auto it = next; it != end; ++it) {
+  sample(endpoint);
+  for (auto it = next; it != end && lookahead > 0.; ++it) {
     const auto point = relative(*it);
-    if (dot(point, point) >= radius_sq) {
-      const auto d = delta(point, endpoint);
-      const double a = dot(d, d);
-      const double b = dot(endpoint, d);
-      const double c = dot(endpoint, endpoint)-radius_sq;
-      if (a > 1e-12)
-        endpoint = advance(endpoint, d, (-b + std::sqrt(std::max(0., b*b-a*c)))/a);
-      break;
-    }
-    endpoint = point;
+    const auto segment = delta(point, endpoint);
+    const double length = std::hypot(segment.first, segment.second);
+    if (length <= 1e-9) continue;
+    const double distance = std::min(lookahead, length);
+    endpoint = advance(endpoint, segment, distance / length);
+    sample(endpoint);
+    lookahead -= distance;
   }
   return std::hypot(endpoint.first, endpoint.second) >= .05 ?
       std::atan2(endpoint.second, endpoint.first) : invalid;
 }
 
-template<class IsBlocked>
-bool headingCorridorBlocked(HeadingPoint origin, double yaw, double distance,
-                            double sample_step, IsBlocked is_blocked) {
-  const int steps = std::max(1, static_cast<int>(std::ceil(distance/sample_step)));
-  const double dx = std::cos(yaw)*distance/steps;
-  const double dy = std::sin(yaw)*distance/steps;
-  for (int i = 1; i <= steps; ++i)
-    if (is_blocked(origin.first+i*dx, origin.second+i*dy)) return true;
-  return false;
+template<class Iter, class Position>
+double pathLookaheadChord(Iter begin, Iter end, Position position,
+                          HeadingPoint center, double lookahead) {
+  return pathLookaheadChord(begin, end, position, center, lookahead, [](HeadingPoint) {});
 }
-
-class AlignmentHeadingLock {
- public:
-  bool active() const { return std::isfinite(locked_align_yaw_); }
-  double yaw() const { return locked_align_yaw_; }
-  void acquire(double yaw) {
-    if (!active()) locked_align_yaw_ = yaw;
-  }
-  void beginForward(HeadingPoint origin, double odom_yaw) {
-    origin_ = origin;
-    forward_ = {std::cos(odom_yaw), std::sin(odom_yaw)};
-  }
-  bool travelledForward(HeadingPoint point, double distance) const {
-    return (point.first-origin_.first)*forward_.first +
-           (point.second-origin_.second)*forward_.second > distance;
-  }
-  void clear() { locked_align_yaw_ = std::numeric_limits<double>::quiet_NaN(); }
-
- private:
-  double locked_align_yaw_ = std::numeric_limits<double>::quiet_NaN();
-  HeadingPoint origin_{}, forward_{};
-};
 
 // Heading feedback from TF and measured yaw rate controls the bounded turn.
 class StartHeading {
