@@ -1,0 +1,14 @@
+<launch>
+  <arg name="motion_config" default="$(find slicer_bringup)/config/motion_c30d_v110_field.yaml"/>
+  <arg name="gamepad_device" default=""/>
+  <arg name="estop_marker"/>
+  <rosparam command="load" ns="/ugv/motion" file="$(arg motion_config)"/>
+  <include file="$(find slicer_base)/launch/base.launch">
+    <arg name="hardware_enabled" value="true"/>
+    <arg name="hardware_config" value="$(find slicer_base)/config/c30d_v110.yaml"/>
+    <arg name="gamepad_device" value="$(arg gamepad_device)"/>
+    <arg name="required" value="true"/>
+    <arg name="estop_marker" value="$(arg estop_marker)"/>
+  </include>
+  <node pkg="slicer_bringup" type="status_node.py" name="slicer_status" output="screen" required="true"/>
+</launch>

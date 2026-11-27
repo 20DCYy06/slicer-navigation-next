@@ -1,0 +1,11 @@
+[Unit]
+Description=Slicer localization, perception and RTK
+BindsTo=slicer-field-master.service
+After=slicer-field-master.service
+
+[Service]
+Type=exec
+ExecStart=%h/.config/slicer/services/workspace/current/service/run_unit localization
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=20s

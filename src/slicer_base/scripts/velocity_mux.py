@@ -2,6 +2,7 @@
 """Resident ROS command arbiter with a fail-closed costmap and odometry Guard."""
 
 from math import isfinite
+from pathlib import Path
 from threading import Lock
 import time
 
@@ -123,6 +124,10 @@ class MuxNode:
         self.timeout = config["command_timeout_s"]
         self.status_timeout = motion["stop_freshness_s"]
         self.policy = VelocityMux(self.timeout)
+        marker = rospy.get_param("~estop_marker", "")
+        self.estop_marker = Path(marker) if marker else None
+        if self.estop_marker is not None and self.estop_marker.exists():
+            self.policy.emergency(True, time.monotonic(), rospy.Time.now().to_sec())
         self.limits = MotionLimits(motion)
         self.guard = Guard(self.limits)
         self.lock = Lock()
@@ -201,8 +206,14 @@ class MuxNode:
             return
         now, stamp = time.monotonic(), rospy.Time.now()
         with self.lock:
+            newly_latched = not self.policy.estop
             self.policy.emergency(True, now, stamp.to_sec())
             self.set_output(ZERO, now, stamp)
+            if newly_latched and self.estop_marker is not None:
+                try:
+                    self.estop_marker.touch(exist_ok=True)
+                except OSError as error:
+                    rospy.logerr("Cannot persist emergency stop to %s: %s", self.estop_marker, error)
 
     def hold(self, _request):
         with self.lock:

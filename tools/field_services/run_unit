@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+release=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+role=${1:?service role required}
+pin="${XDG_RUNTIME_DIR:?systemd user runtime is required}/slicer-field/release"
+settings="$HOME/.config/slicer/services/field.env"
+if [[ -f "$settings" ]]; then
+    source "$settings"
+fi
+unset ROS_HOSTNAME ROS_IP
+export ROS_MASTER_URI=http://localhost:11311
+if [[ -n ${SLICER_ROS_IP:-} ]]; then
+    export ROS_IP="$SLICER_ROS_IP"
+fi
+
+if [[ "$role" == master ]]; then
+    source "$release/install/setup.bash"
+    /usr/bin/python3 - <<'PY'
+import socket
+
+with socket.socket() as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        server.bind(("0.0.0.0", 11311))
+    except OSError as error:
+        raise SystemExit(f"ROS Master port 11311 is already in use or unavailable: {error}")
+PY
+    printf '%s\n' "$release" > "$pin"
+    exec roscore -p 11311
+fi
+
+if ! timeout 8s bash -c 'until [[ -s "$1" ]]; do sleep .1; done' _ "$pin" ||
+        [[ $(<"$pin") != "$release" ]]; then
+    printf '%s\n' 'Service is waiting for the selected release. Stop and start the master through run service.' >&2
+    exit 1
+fi
+if [[ "$role" == vision ]]; then
+    grasp=${SLICER_GRASP_INSTALL:-$HOME/workspace/slicer-visual-grasp/install}
+    if [[ ! -f "$grasp/setup.bash" ]]; then
+        printf 'Vision install unavailable: %s\n' "$grasp" >&2
+        exit 1
+    fi
+    source "$grasp/setup.bash"
+    source "$release/install/setup.bash" --extend
+else
+    source "$release/install/setup.bash"
+fi
+if ! timeout 10s bash -c 'until rosnode list >/dev/null 2>&1; do sleep .2; done'; then
+    printf '%s\n' 'The managed ROS Master did not become ready.' >&2
+    exit 1
+fi
+if [[ "$role" == navigation || "$role" == vision ]]; then
+    if ! timeout 10s bash -c 'until rosservice info /ugv/control/hold >/dev/null 2>&1; do sleep .2; done'; then
+        printf '%s\n' 'The managed base Hold service did not become ready.' >&2
+        exit 1
+    fi
+fi
+
+outdoor=${SLICER_OUTDOOR:-true}
+case "$role" in
+    base)
+        motion=${SLICER_MOTION_CONFIG:-$release/install/share/slicer_bringup/config/motion_c30d_v110_field.yaml}
+        state="${XDG_STATE_HOME:-$HOME/.local/state}/slicer-field"
+        install -d -m 0700 "$state"
+        exec roslaunch --wait slicer_bringup field_base.launch motion_config:="$motion" \
+            gamepad_device:="${SLICER_GAMEPAD_DEVICE:-}" estop_marker:="$state/estop"
+        ;;
+    localization)
+        exec roslaunch --wait slicer_bringup field_localization.launch outdoor:="$outdoor" \
+            gnss_config:="${SLICER_GNSS_CONFIG:-$HOME/.config/slicer/gnss.yaml}" \
+            gnss_serial_device:="${SLICER_GNSS_SERIAL_DEVICE:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00}" \
+            ntrip:="${SLICER_NTRIP:-$outdoor}" \
+            ntrip_credentials_file:="${SLICER_NTRIP_CREDENTIALS_FILE:-$HOME/.config/slicer/ntrip_credentials.json}" \
+            um982_gst:="${SLICER_UM982_GST:-true}"
+        ;;
+    navigation)
+        exec roslaunch --wait slicer_navigation navigation.launch enable_geographic:="$outdoor" \
+            enable_gnss_fusion:="$outdoor"
+        ;;
+    vision)
+        exec roslaunch --wait slicer_visual_grasp visual_grasp.launch
+        ;;
+    *)
+        printf 'Unknown service role: %s\n' "$role" >&2
+        exit 2
+        ;;
+esac

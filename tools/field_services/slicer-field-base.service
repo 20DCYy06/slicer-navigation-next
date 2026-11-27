@@ -1,0 +1,16 @@
+[Unit]
+Description=Slicer chassis driver, Mux and Guard
+BindsTo=slicer-field-master.service
+After=slicer-field-master.service
+
+[Service]
+Type=exec
+ExecStart=%h/.config/slicer/services/workspace/current/service/run_unit base
+Restart=always
+RestartSec=2s
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=slicer-field-master.service
