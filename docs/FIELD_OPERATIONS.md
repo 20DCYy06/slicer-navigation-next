@@ -2,31 +2,30 @@
 
 ## 启动车端与界面
 
-日常从新项目工作区启动。`current` 指向选定的稳定发布。先退出当前运行的车端栈，确保底盘和 GNSS 串口只有一个持有者。确认现场有人可随时关闭实体驱动，再执行以下命令。
+日常从新项目工作区操作。`current` 指向选定的稳定发布。迁入常驻服务前先退出此前的手工车端启动，确认旧底盘和 ROS Master 已退出。
 
 ```bash
 cd /home/ugv/workspace/slicer-navigation-next
-./current/run
+tools/install_field_services.sh
+./current/run service start base
+./current/run service status
 ```
 
-启动后驻车 Hold。默认同时启用本地导航、WGS84、NTRIP 及配准后的实时 RTK 平移融合。
-线速度上限为 0.10 m/s，已有完整箱体绕行记录。只用本地坐标时执行 `./current/run outdoor:=false`。
-开阔场地可选以下 0.20 m/s 配置。各档的实测工况见[迁移与验证记录](MIGRATION.md)。
+安装是一次性操作。Jetson 的用户级 systemd 在开机时启动 `master` 和 `base`，底盘先进入 Hold。新装车辆若尚未启用用户驻留，由管理员执行 `sudo loginctl enable-linger "$USER"`。日常按需启动定位、导航及视觉。
 
 ```bash
-./current/run motion_config:="$PWD/current/install/share/slicer_bringup/config/motion_c30d_v110_speed_020.yaml"
+./current/run service start localization
+./current/run service start navigation
+./current/run ui
 ```
 
-户外模式默认使用本车的 UM982 USB 设备和 `~/.config/slicer/{gnss.yaml,ntrip_credentials.json}`。
-换车时用 `gnss_serial_device:=<设备路径>`、`gnss_config:=<配置文件>` 和
-`ntrip_credentials_file:=<凭据文件>` 指定。串口节点启动时请求 1 Hz GST，供停稳后地理复核，
-设置在接收机上随重启清除。接收机已提供 GST 或使用其他型号时可传 `um982_gst:=false`。
+统一入口是 `./current/run service <status|start|stop|restart|logs> [组件]`。组件为 `master`、`base`、`localization`、`navigation`、`vision`。例如 `./current/run service logs base` 查看底盘日志，`./current/run service stop navigation` 结束车端导航。车端服务和界面使用本机同一个 ROS Master，BT 从同一发布安装调用 [公开接口](INTERFACE.md)。
 
-在同一桌面另开终端，进入同一工作区后运行 `./current/run ui`。车端和 UI 使用同一个 `ROS_MASTER_URI`，未设置时使用本机 ROS Master。BT 从同一安装环境调用[公开 Action、服务与状态](INTERFACE.md)。
+场地配置放在 `~/.config/slicer/services/field.env`。默认启用户外 WGS84、NTRIP 和配准后的 RTK 平移融合，速度上限为 0.10 m/s。`SLICER_OUTDOOR=false` 只用本地坐标。`SLICER_MOTION_CONFIG` 指向已确认的绝对路径 YAML 可选择实测档位。换车时用 `SLICER_GNSS_SERIAL_DEVICE`、`SLICER_GNSS_CONFIG` 和 `SLICER_NTRIP_CREDENTIALS_FILE` 指定 GNSS 配置。UM982 默认请求 1 Hz GST 用于停稳复核。
 
 接口版 `interfaces-v1.0.0` 使用 `slicer_interfaces` 1.0.0。切换到这版发布时，从选定发布的同一个安装环境重新构建视觉与 BT，再启动车端和各客户端。用 `rosmsg md5 slicer_interfaces/UgvStatus` 核对各环境的消息指纹。
 
-监督测试其他封存候选时，在其 `releases/<源码提交>/` 目录直接使用 `./run` 和 `./run ui`。
+更换发布前用 `./current/run service stop master` 取消活动任务并确认停车。待服务退出后切换 `current`，再用 `./current/run service start base` 启动，按需重新启动其他组件。Master 重启后重新打开界面与 BT 客户端。软件急停跨重启保留。清除急停前先断开实体驱动，停掉 `base` 后由负责人删除 `${XDG_STATE_HOME:-$HOME/.local/state}/slicer-field/estop`，重启底盘会停在 Hold。
 
 ## 发目标、停车与录包
 
@@ -37,21 +36,18 @@ cd /home/ugv/workspace/slicer-navigation-next
 3. 停止任务时点击「取消本目标」，观察停车反馈，再点击「驻车 Hold」。手柄 B 键是软件急停。
    需要立刻切断驱动时使用车上实体 Motor 开关。
 4. 停稳后点击「结束录包」，等界面显示保存成功。默认目录为 `~/.local/share/slicer/field-data/`，
-   每次运行包含 bag、有效运动配置和发布标识。退出界面后，在车端终端用 Ctrl+C 停栈。
+   每次运行包含 bag、有效运动配置和发布标识。停稳后可退出界面，按需停止导航服务。
 
 ## 视觉伺服
 
-采用[视觉仓库](https://github.com/20DCYy06/slicer-visual-grasp)提供的独立安装。导航和视觉可各自启动，在车上联动时使用同一 ROS Master。先运行导航车端，再在另一终端加载导航与视觉安装并启动视觉节点。
+将[视觉仓库](https://github.com/20DCYy06/slicer-visual-grasp)按同一导航消息版本独立构建。`field.env` 中的 `SLICER_GRASP_INSTALL` 指定其安装路径，缺省为 `~/workspace/slicer-visual-grasp/install`。视觉使用常驻底盘和同一个 Master，可独立启停。
 
 ```bash
-NAV="$HOME/workspace/slicer-navigation-next"
-GRASP="$HOME/workspace/slicer-visual-grasp/install"
-source "$GRASP/setup.bash"
-source "$NAV/current/install/setup.bash" --extend
-roslaunch slicer_visual_grasp visual_grasp.launch
+./current/run service start vision
+./current/run ui
 ```
 
-在桌面终端用 `SLICER_GRASP_INSTALL="$HOME/workspace/slicer-visual-grasp/install" ./current/run ui` 启动界面。导航到点或取消后，等停稳并解除 Hold，再用「启动抓取」、「释放」或「取消本动作」。视觉终态的持物恢复提示由现场人员处理。等底盘停稳、速度源归零后可以继续导航。接口和顺序调用见 [BT 接入说明](INTERFACE.md)。
+导航到点或取消后，等停稳并解除 Hold，再用「启动抓取」、「释放」或「取消本动作」。视觉终态的持物恢复提示由现场人员处理。等底盘停稳、速度源归零后可以继续导航。接口和顺序调用见 [BT 接入说明](INTERFACE.md)。
 
 ## 配套与回退
 
@@ -65,7 +61,7 @@ roslaunch slicer_visual_grasp visual_grasp.launch
 
 V1.9 回退同时恢复固件和软件发布。
 
-1. 取消目标、驻车 Hold，确认实车停稳并退出新车端栈。
+1. 用 `./current/run service stop master` 取消目标、驻车 Hold，在确认实车停稳后退出新车端栈。临时切回旧软件期间，用 `systemctl --user disable slicer-field-master.service slicer-field-base.service` 关闭新底盘开机自启。
 2. 用 `/home/ugv/workspace/slicer/run status` 核对旧入口选中的发布是 `20261125-c30d-front-pwm-v19`。旧发布根目录是 `/home/ugv/workspace/slicer/releases/20261125-c30d-front-pwm-v19`。
 3. 由底盘负责人断开驱动动力，使用该旧发布内 `deps/slicer_ugv_hardware/Firmware/v1.9/bin/firmware.bin` 恢复 V1.9，SHA-256 应为 `f152dbdfafbb3bcab569edd77cad48ef010cb832b0bc560f201b4be6c68e82e5`。确认刷写和读回后，通过 `/home/ugv/workspace/slicer/run rtk` 启动旧 RTK 界面，或用 `/home/ugv/workspace/slicer/run no-rtk nav` 启动旧本地导航。
 
