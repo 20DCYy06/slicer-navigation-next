@@ -43,11 +43,13 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     nh.param("continuity_cost/deviation_cap_m", cost_options_.deviation_cap_m, 1.);
     nh.param("continuity_cost/min_clearance_m", cost_options_.min_clearance_m, .23);
     nh.param("continuity_cost/rejoin_distance_m", cost_options_.rejoin_distance_m, .30);
+    nh.param("continuity_cost/tracking_reserve_m", tracking_reserve_m_, 0.);
     nh.param("task_side_hysteresis", side_enabled_, false);
     if(!std::isfinite(epsilon_) || epsilon_<0. || !std::isfinite(control_spacing_) ||
        control_spacing_<=0. || !std::isfinite(sample_spacing_) || sample_spacing_<=0. ||
        refinements_<0 || max_cost_<0 || max_cost_>252 ||
-       (cost_field_enabled_ && !validContinuityOptions(cost_options_)))
+       (cost_field_enabled_ && (!validContinuityOptions(cost_options_) ||
+        !std::isfinite(tracking_reserve_m_) || tracking_reserve_m_ < 0.)))
       throw std::invalid_argument("invalid GlobalPlanner smoothing or continuity cost configuration");
     raw_.reset(new global_planner::GlobalPlanner());
     if (cost_field_enabled_) {
@@ -107,6 +109,8 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
       return cell_rejection(p, provisional) == nullptr;
     };
     std::vector<Point2> retained_suffix;
+    std::vector<geometry_msgs::PoseStamped> original;
+    bool used_tracking_reserve = false;
     if (cost_field_enabled_) {
       grid = snapshot();
       double inscribed, circumscribed;
@@ -115,33 +119,22 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
       // has the required centre-to-hit clearance, not only at its centre.
       const double clearance = std::max(cost_options_.min_clearance_m, circumscribed)
                              + grid.getResolution() * std::sqrt(.5);
-      hard = hardContinuityMask(grid.getCharMap(), grid.getSizeInCellsX(), grid.getSizeInCellsY(),
-                                grid.getResolution(), clearance);
+      const auto mask = [&](double radius) {
+        return hardContinuityMask(grid.getCharMap(), grid.getSizeInCellsX(), grid.getSizeInCellsY(),
+                                  grid.getResolution(), radius);
+      };
+      hard = mask(clearance);
       if (start.header.frame_id != frame) return reject(goal, "start frame differs from costmap");
       if (goal.header.frame_id != frame) return reject(goal, "goal frame differs from costmap");
       if (const auto* reason = cell_rejection(point(start), allow_unknown_))
         return reject(goal, std::string("start ") + reason);
       if (const auto* reason = cell_rejection(point(goal), allow_unknown_))
         return reject(goal, std::string("goal ") + reason);
-      std::vector<Point2> reference;
       if (epoch == previous_epoch_ && sameGoal(goal)) {
         retained_suffix = remainingRoute(previous_path_, point(start), cost_options_.rejoin_distance_m);
-        reference = observedReference(retained_suffix, grid.getResolution() * .5, feasible);
       } else if (side_enabled_) {
         task_side_.reset(point(start), point(goal));
       }
-      search_grid_ = grid;
-      auto* costs = search_grid_.getCharMap();
-      if (cost_options_.obstacle_weight > 0.)
-        preferObstacleDistance(grid.getCharMap(), costs, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
-                               grid.getResolution(), clearance, cost_options_.obstacle_soft_radius_m);
-      encodeContinuityCosts(costs, hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
-          grid.getResolution(), {grid.getOriginX(), grid.getOriginY()}, point(start),
-          reference, cost_options_, costs);
-    }
-    std::vector<geometry_msgs::PoseStamped> original;
-    bool found = raw_ && raw_->makePlan(start, goal, original) && !original.empty();
-    if (cost_field_enabled_) {
       const auto checked = [&] {
         // In old Navfn coordinates the traceback indexes cell centres from
         // the map origin and appends the exact goal twice. Avoid gratuitous
@@ -164,13 +157,36 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
         original.push_back(terminal);
         return pathFeasible(original, half_cell, feasible);
       };
-      if (!found || !checked()) {
+      const auto solve = [&] {
+        const auto reference = observedReference(retained_suffix, grid.getResolution() * .5, feasible);
+        search_grid_ = grid;
+        auto* costs = search_grid_.getCharMap();
+        if (cost_options_.obstacle_weight > 0.)
+          preferObstacleDistance(grid.getCharMap(), costs, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
+                                 grid.getResolution(), clearance, cost_options_.obstacle_soft_radius_m);
+        encodeContinuityCosts(costs, hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
+            grid.getResolution(), {grid.getOriginX(), grid.getOriginY()}, point(start),
+            reference, cost_options_, costs);
+        original.clear();
+        if (raw_->makePlan(start, goal, original) && !original.empty() && checked()) return true;
         // Retry the identical objective once with cell-centre traceback
-        // when interpolation crossed the hard mask. No older route is reused.
-        found = grid_fallback_->makePlan(start, goal, original) && !original.empty() && checked();
+        // when interpolation crossed the active mask.
+        original.clear();
+        return grid_fallback_->makePlan(start, goal, original) && !original.empty() && checked();
+      };
+      if (tracking_reserve_m_ > 0.) {
+        // Prefer a complete route with spare clearance before using the
+        // nominal mask, which remains the acceptance limit for start and goal.
+        auto alternate_mask = mask(clearance + tracking_reserve_m_);
+        if (!alternate_mask.empty()) {
+          hard.swap(alternate_mask);
+          used_tracking_reserve = feasible(point(start), allow_unknown_) &&
+                                  feasible(point(goal), allow_unknown_) && solve();
+          if (!used_tracking_reserve) hard.swap(alternate_mask);
+        }
       }
-      if (!found) return reject(goal, "no valid traceback on the current cost field");
-    } else if (!found) {
+      if (!used_tracking_reserve && !solve()) return reject(goal, "no valid traceback on the current cost field");
+    } else if (!raw_ || !raw_->makePlan(start, goal, original) || original.empty()) {
       return false;
     }
     publish(raw_pub_,original);
@@ -285,6 +301,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
       std::ostringstream out;
       out<<"smoothed raw="<<original.size()<<" known="<<smooth_count<<" output="<<plan.size()
          <<" refinement="<<smooth.refinement<<" length="<<smooth.length;
+      if (used_tracking_reserve) out << " tracking_reserve_m=" << tracking_reserve_m_;
       status(out.str());
     } else {
       plan=original;
@@ -387,6 +404,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
   ros::Publisher raw_pub_,smooth_pub_,status_pub_;
   bool enabled_=true, smooth_observed_prefix_=false;
   double epsilon_=.03,control_spacing_=.2,sample_spacing_=.05;
+  double tracking_reserve_m_=0.;
   ContinuityCostOptions cost_options_;
   bool cost_field_enabled_=false, allow_unknown_=true, side_enabled_=false;
   SideHysteresis task_side_;
