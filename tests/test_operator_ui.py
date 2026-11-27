@@ -143,3 +143,16 @@ class OperatorDepartureTest(unittest.TestCase):
         self.ui.events.put(("departure_ack", (departure, True, "")))
         self.status(hold=False, epoch=4)
         self.ui.client.send_goal.assert_not_called()
+
+    def test_closing_after_release_ack_still_waits_for_parking(self):
+        self.select()
+        self.ui.send_button.click()
+        departure = self.ui.departure
+        self.ui.events.put(("departure_ack", (departure, True, "")))
+        self.ui.drain_events()
+        close = QtGui.QCloseEvent()
+        self.ui.closeEvent(close)
+        self.assertFalse(close.isAccepted())
+        self.assertTrue(departure.canceled.is_set())
+        self.ui.request_control.assert_called_with("hold")
+        self.ui.client.send_goal.assert_not_called()

@@ -599,7 +599,7 @@ class Operator(QtWidgets.QWidget):
                 path = "/ugv/control/" + role
                 rospy.wait_for_service(path, timeout=1.0)
                 service = rospy.ServiceProxy(path, Control)
-                if role == "release" and departure.canceled.is_set():
+                if role == "release" and departure is not None and departure.canceled.is_set():
                     return False, ""
                 response = service()
                 return response.accepted, response.reason
@@ -817,9 +817,11 @@ class Operator(QtWidgets.QWidget):
         self.map.close_map()
 
     def closeEvent(self, event):
-        if self.releasing:
-            if self.departure is not None:
-                self.abort_departure("关闭界面，本次未发车")
+        if self.departure is not None:
+            self.abort_departure("关闭界面，本次未发车")
+            event.ignore()
+            return
+        if self.releasing or self.parking:
             event.ignore()
             return
         if self.services.operation in ("start", "stop", "restart"):
