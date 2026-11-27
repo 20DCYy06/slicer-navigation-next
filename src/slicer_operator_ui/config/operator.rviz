@@ -1,0 +1,60 @@
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Name: 地面网格
+      Enabled: true
+      Alpha: 0.45
+      Cell Size: 0.5
+      Color: 99; 139; 161
+      Plane Cell Count: 80
+      Reference Frame: <Fixed Frame>
+    - Class: rviz/Map
+      Name: 地图
+      Enabled: true
+      Topic: /ugv/display/map
+      Alpha: 0.8
+      Color Scheme: map
+      Draw Behind: true
+    - Class: rviz/LaserScan
+      Name: 激光扫描
+      Enabled: true
+      Topic: /scan
+      Color: 45; 189; 235
+      Color Transformer: FlatColor
+      Position Transformer: XYZ
+      Style: Flat Squares
+      Size (m): 0.035
+      Queue Size: 4
+    - Class: rviz/Axes
+      Name: 车体
+      Enabled: true
+      Length: 0.35
+      Radius: 0.035
+      Reference Frame: base_link
+    - Class: rviz/Pose
+      Name: 目标预览
+      Enabled: true
+      Topic: /slicer_operator_ui/target_preview
+      Color: 255; 182; 90
+      Alpha: 0.95
+      Shape: Arrow
+  Global Options:
+    Background Color: 18; 34; 48
+    Fixed Frame: map
+    Frame Rate: 18
+  Tools:
+    - Class: rviz/MoveCamera
+    - Class: rviz/SetGoal
+      Topic: /slicer_operator_ui/map_point
+  Views:
+    Current:
+      Class: rviz/TopDownOrtho
+      Angle: 0
+      Scale: 55
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+Window Geometry:
+  Hide Left Dock: true
+  Hide Right Dock: true
