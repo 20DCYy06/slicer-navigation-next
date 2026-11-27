@@ -1,15 +1,19 @@
 from pathlib import Path
+import os
 import sys
 import unittest
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from slicer_interfaces.msg import NavigateToPointResult
+from PyQt5 import QtGui, QtWidgets
+import rospy
+from slicer_interfaces.msg import NavigateToPointResult, UgvStatus
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/slicer_operator_ui/scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/slicer_operator_ui/src"))
-from operator_ui import grasp_result_text, map_coordinates, result_text, target
+from operator_ui import Operator, grasp_result_text, map_coordinates, result_text, target
 
 
 class OperatorResultTest(unittest.TestCase):
@@ -55,3 +59,87 @@ class OperatorResultTest(unittest.TestCase):
         goal, _ = target("WGS84", "22.30001", "114.20001", "", "", True)
         self.assertEqual((22.30001, 114.20001), (goal.latitude_deg, goal.longitude_deg))
         self.assertTrue(goal.require_geographic_verification)
+
+
+class OperatorDepartureTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        self.time = rospy.Time(100)
+        clock = patch.object(rospy.Time, "now", side_effect=lambda: self.time)
+        clock.start()
+        self.addCleanup(clock.stop)
+        with patch.object(Operator, "connect_ros"):
+            self.ui = Operator()
+        self.ui.timer.stop()
+        self.ui.client = Mock()
+        self.ui.ros_ready = True
+        self.ui.nav_server_stamp = self.time
+        self.ui.request_control = Mock()
+        self.addCleanup(self.ui.close)
+        self.status(hold=True, epoch=3)
+
+    def status(self, *, hold, epoch, **fields):
+        self.time += rospy.Duration(.05)
+        self.ui.base = UgvStatus(base_online=True, hold=hold, velocity_valid=True,
+                                 stop_valid=True, stopped=True, active_velocity_source="zero",
+                                 control_epoch=epoch, **fields)
+        self.ui.base.header.stamp = self.ui.base.velocity.header.stamp = self.time
+        self.ui.drain_events()
+
+    def select(self):
+        self.ui.fields[0].setText("1.25")
+        self.ui.fields[1].setText("-0.1")
+        self.assertTrue(self.ui.send_button.isEnabled())
+        self.ui.request_control.assert_not_called()
+        self.ui.client.send_goal.assert_not_called()
+
+    def test_one_tap_waits_for_release_ack_and_fresh_control_status(self):
+        self.select()
+        self.ui.send_button.click()
+        departure = self.ui.departure
+        self.ui.request_control.assert_called_once_with("release", departure)
+        self.status(hold=False, epoch=4)
+        self.ui.client.send_goal.assert_not_called()
+        self.ui.events.put(("departure_ack", (departure, True, "")))
+        self.ui.drain_events()
+        self.ui.client.send_goal.assert_called_once()
+        goal = self.ui.client.send_goal.call_args[0][0]
+        self.assertEqual(goal.local_target.pose.position.x, 1.25)
+        self.ui.drain_events()
+        self.ui.client.send_goal.assert_called_once()
+
+    def test_stop_while_releasing_discards_goal_even_after_late_ack(self):
+        self.select()
+        self.ui.send_button.click()
+        departure = self.ui.departure
+        self.ui.hold_button.click()
+        self.ui.events.put(("departure_ack", (departure, True, "")))
+        self.status(hold=False, epoch=4)
+        self.ui.client.send_goal.assert_not_called()
+        self.ui.request_control.assert_called_with("hold")
+
+    def test_external_authority_change_blocks_departure(self):
+        self.select()
+        self.ui.send_button.click()
+        departure = self.ui.departure
+        self.ui.events.put(("departure_ack", (departure, True, "")))
+        self.status(hold=False, epoch=5)
+        self.ui.client.send_goal.assert_not_called()
+        self.ui.request_control.assert_called_with("hold")
+
+    def test_closing_while_releasing_cancels_departure_and_parks(self):
+        self.select()
+        self.ui.send_button.click()
+        departure = self.ui.departure
+        close = QtGui.QCloseEvent()
+        self.ui.closeEvent(close)
+        self.assertFalse(close.isAccepted())
+        self.assertTrue(departure.canceled.is_set())
+        self.ui.request_control.assert_called_with("hold")
+        self.ui.events.put(("departure_ack", (departure, True, "")))
+        self.status(hold=False, epoch=4)
+        self.ui.client.send_goal.assert_not_called()
