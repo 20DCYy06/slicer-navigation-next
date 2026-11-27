@@ -1,0 +1,13 @@
+# Supervised straight-line acceptance at a physical speed cap of 0.20 m/s.
+max_linear_mps: 0.20
+max_angular_rps: 0.45
+linear_acceleration_mps2: 0.20
+angular_acceleration_rps2: 1.0
+linear_braking_mps2: 0.10
+min_navigation_linear_mps: 0.0175
+footprint: [[-0.145, -0.14], [0.2, -0.14], [0.2, 0.14], [-0.145, 0.14]]
+stop_linear_mps: 0.01
+stop_angular_rps: 0.05
+stop_window_s: 1.0
+stop_freshness_s: 0.5
+stop_timeout_s: 3.0
