@@ -34,10 +34,12 @@ tools/build_candidate.sh -j2
 release_dir=$(tools/stage_candidate.sh)
 ```
 
-封存目录位于 `releases/<源码提交>/`，包含运行入口、安装空间、现场文档、V1.10 固件和 `release.json`。封存需要干净的已提交源码。首次部署已选定的稳定版时，在工作区根目录用 `ln -sT "$release_dir" current` 建立本地启动指针。更新稳定版时先退出当前导航，再用 `ln -sfnT "$release_dir" current` 切换指针。NTRIP 凭据和录包保存在车端，路径见[现场操作](docs/FIELD_OPERATIONS.md)。
+封存目录位于 `releases/<源码提交>/`，包含运行入口、安装空间、现场文档、V1.10 固件和 `release.json`。封存需要干净的已提交源码。用 `tools/stage_candidate.sh --output-dir DIRECTORY` 可从测试工作树封存到正式工作区的发布目录。发布切换、NTRIP 凭据和录包路径见[现场操作](docs/FIELD_OPERATIONS.md)。
 
 ## 开发分支
 
+分支软件测试和实车候选切换见[开发与排查](docs/FIELD_OPERATIONS.md#开发与排查)。
+
 `main` 以交付候选 `94ecf19` 为基线。`37c2033` 到 `94ecf19` 只更新了 `docs/MIGRATION.md`，车端代码与配置一致。
 
-`performance/wgs84-dwa-170` 保留封存候选 `b0633df`。0.20 m/s 长直线 WGS84、双挡板和行进换点均有[实车验收记录](docs/MIGRATION.md)，对应规划改动进入 `main`。后续提速在独立候选验证，实车从候选自身的 `run` 启动。
+`performance/wgs84-dwa-170` 保留封存候选 `b0633df`。0.20 m/s 长直线 WGS84、双挡板和行进换点均有[实车验收记录](docs/MIGRATION.md)，对应规划改动进入 `main`。后续提速在独立候选验证，上实车时按现场手册切换正式工作区的发布。

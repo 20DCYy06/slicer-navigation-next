@@ -1,5 +1,7 @@
 # Slicer 现场操作
 
+从测试分支启动模拟、界面或实车候选，见[开发与排查](#开发与排查)。
+
 ## 启动车端与界面
 
 日常从新项目工作区操作。`current` 指向选定的稳定发布。迁入常驻服务前先退出此前的手工车端启动，确认旧底盘和 ROS Master 已退出。
@@ -11,7 +13,7 @@ tools/install_field_services.sh
 ./current/run service status
 ```
 
-安装是一次性操作。Jetson 的用户级 systemd 在开机时启动 `master` 和 `base`，底盘先进入 Hold。新装车辆若尚未启用用户驻留，由管理员执行 `sudo loginctl enable-linger "$USER"`。日常按需启动定位、导航及视觉。
+安装是一次性操作。Jetson 的用户级 systemd 在开机时启动 `master` 和 `base`。底盘组包含 C30D 驱动、Mux/Guard、手柄和车辆状态，启动后先进入驻车。新装车辆若尚未启用用户驻留，由管理员执行 `sudo loginctl enable-linger "$USER"`。定位、导航和视觉按需启动。
 
 ```bash
 ./current/run service start localization
@@ -65,11 +67,49 @@ V1.9 回退同时恢复固件和软件发布。
 
 ## 开发与排查
 
-- 依赖导入、构建与封存命令见仓库根目录 `README.md`。
-- Mock 可用 `tools/build_candidate.sh --mock-only -j2` 构建。在独立 ROS Master 下从新
-  `install/setup.bash` 加载环境，再运行 `roslaunch slicer_bringup ugv_mock.launch`。
-  同一环境可运行 `rosrun slicer_operator_ui operator_ui.py`。Mock 默认 Hold，
-  联调时按[接口说明](INTERFACE.md#配置与调用示例)解除 Hold 或注入故障。
+### 在分支上做软件测试
+
+在分支工作树内运行 `tools/test_branch.sh`。它加载本工作树默认的 `devel`，也可用
+`SLICER_TEST_SPACE=install` 指定安装空间。测试 ROS Master 默认使用本机 `15131`，与实车常驻服务并行。多个测试同时运行时，为每组终端设置同一个 `SLICER_TEST_ROS_PORT`。
+
+| 用途 | 第一个终端 | 第二个终端 |
+| --- | --- | --- |
+| 单测或已有规划器测试程序 | 需要 ROS Master 时运行 `tools/test_branch.sh core` | `tools/test_branch.sh exec ./build/check_navigation_routes_ros`，将路径换成当前分支已构建的测试程序 |
+| 界面、BT、消息联调 | `tools/build_candidate.sh --mock-only -j2` 后运行 `tools/test_branch.sh mock` | `tools/test_branch.sh ui` |
+| 真实规划器和模拟底盘闭环 | 完整构建后运行 `tools/test_branch.sh sim` | `tools/test_branch.sh exec /usr/bin/python3 -B tests/check_local_ros.py`，WGS84 用 `tests/check_geographic_ros.py` |
+
+两个终端都进入同一工作树。用 Ctrl+C 停止测试 Master 或模拟栈。软件测试期间，`current` 和开机服务保持原样。
+
+### 让实车运行分支候选
+
+在测试工作树完成[依赖导入](../README.md#从源码构建)，提交待测变更后构建并封存。
+
+```bash
+vehicle="$HOME/workspace/slicer-navigation-next"
+tools/build_candidate.sh -j2 &&
+candidate=$(tools/stage_candidate.sh --output-dir "$vehicle/releases")
+```
+
+确认已输出候选路径后，在同一终端执行切换。服务启动后保持驻车。
+
+```bash
+cd "$vehicle"
+previous=$(readlink -f current)
+printf '回退发布 %s\n' "$previous"
+test -x "$candidate/run" &&
+  ./current/run service stop master &&
+  ln -sfnT "$candidate" current &&
+  ./current/run service start base
+```
+
+用 `./current/run` 启动定位和导航，用 `./current/run ui` 打开界面。`current` 选的是封存发布目录。停掉 Master 会连同底盘和按需组件一起退出，下一次启动使用候选的配套节点。改过 C30D 驱动、Mux 或 Guard 的分支同样这样切换。若改过 systemd 的 `.service` 文件，切换指针后先运行 `tools/install_field_services.sh`，再启动底盘。
+
+测完用 `./current/run service stop master` 停车停服，将 `current` 指回上面记录的 `previous`，然后 `./current/run service start base`。测试过 `.service` 文件时，指回原版后再安装一次原版单位文件。若保留候选指针重启，开机就会加载候选。
+
+临时用手工命令独占硬件时，先用 `./current/run service stop master` 释放设备。需要跨重启保持手工运行时，再禁用自启 `systemctl --user disable slicer-field-master.service slicer-field-base.service`。恢复受管运行时选回正式发布并运行 `tools/install_field_services.sh`，再启动底盘。
+
+### 静态雷达
+
 - 静态雷达排查时保持车身停稳，使用独立 ROS Master 启动仅采集定位及感知的入口。
   `roslaunch slicer_bringup ugv.launch start_lio:=true start_perception:=true`。
   输出稳定后用 `rosrun slicer_bringup record_run.py --perception-snapshot` 录制约 8 秒。
