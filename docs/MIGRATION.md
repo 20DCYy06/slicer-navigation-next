@@ -249,3 +249,26 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 - 用户恢复测试后选择直接以 0.20 m/s 上限验证一次 1.08 m 开阔短直行。封存配置 `motion_c30d_v110_speed_020.yaml` 相对已实车验收的 0.10 m/s 版本只改变线速度上限。线加速度、制动、角速度、足迹、停稳门限和 V1.10 底盘均沿用现值。0.15 m/s 候选留作可复用配置，此轮未发送该档目标。
 - `b726aef` 已构建封存，42 项单测通过。开关保持原样，启动前被动读取六帧停稳、零 PWM 底盘反馈，发送字节数为零。现场读回共享线速及 DWA 线速上限均为 0.20 m/s。实测 2.00 m 前向足迹扫掠、起终点净距、Fixed/GST 和零输出通过后，按用户当次授权发送一条 1.08 m 本地目标。
 - 10.501 s 返回 `SUCCESS`，地图位置残差 0.09985 m，实测停稳并回 Hold，包括新鲜的零输出和 MCU 零目标、零 PWM。指令和 MCU 回显目标峰值均为 0.200 m/s，MCU 实测速率峰值 0.203 m/s，双 EKF 峰值 0.202/0.203 m/s。停稳端点位移为 RTK 0.9637 m、LIO 0.9776 m、轮速 0.9790 m。录包 10 次全局平滑，包含一个 GoalID 及相应结果。会话退出并恢复 GST，底盘和 RTK 串口均空闲。此档已实车验收的范围是开阔短直行。证据 `field-data/verification/field-v110-speed-020-NkC8ND/straight`。
+
+### 0.20 m/s 实车长直线基线
+
+- 使用 `b726aef` 和实时 RTK 融合。首条目标距 B 约 6.52 m。FAST-LIO 原始里程计及雷达扫描的源时间戳落后约 21 s，RTK、IMU 和双 EKF 输出仍新鲜。现有定位时效检查返回 `LOCALIZATION_UNAVAILABLE`，全程零速度和零 PWM。录包看见 FAST-LIO 延时逐步增加，但未同时录到原始点云帧，无法定位排队始于哪一级。用户说明进场时抬过车。证据 `field-data/verification/field-wgs84-v110-speed-020-w7Xq3E/wgs84`。
+- 按现场要求原地重启，起点 RTK 只差 0.011 m，复用同一 B 点。复测全程原始雷达约 10 Hz，原始雷达、FAST-LIO 与 2D 扫描最大源时间延时分别约 0.110、0.127 和 0.140 s。经单独授权发送一条 6.51 m 目标。约 14.09 s 提交变换并进入导航，动作内发布 526 条带源时间的 GNSS XY 观测。Mux 指令及 MCU 回显峰值均为 0.200 m/s，MCU 实测峰值 0.206 m/s。
+- 约 38.19 s 地图横向偏到原试验线右侧 0.601 m，RTK 同期为 0.611 m，触发现场脚本的 0.60 m 单次路线范围。40.12 s 返回 `CANCELED` 且确认停稳，之后进入 Hold，输出归零并释放两个串口。独立 RTK 位移 4.621 m，距 B 2.025 m，LIO 位移 4.642 m。地理投影与测绘 B 相差 0.055 m，取消前最后一条全局平滑路线向右最远偏约 0.643 m。本次确认长线上达到目标速度及可控停车，5～10 m 停稳到点仍待实车验证。证据 `field-data/verification/field-wgs84-v110-020-scan-retry-281VYQ/wgs84`。
+- 对照录包的时间戳与全局栅格，从导航起点到实测 B 的 132 个中线采样点全是已观测的空闲格。抽查各时段从重新规划起点到实际投影目标的直线，同样无阻塞或未知格，距真实雷达命中的最近致命格约 0.80 m。向右偏出已出现在原始全局路径，经平滑与跟踪延续。分析 `field-data/verification/field-wgs84-v110-020-scan-retry-281VYQ/physical-route-grid-origin.txt`。
+
+### DWA 性能候选
+
+- 用安装的 ROS DWA 对实车录包重算。35 个准备慢行快照中，34 个重现原前向指令至 0.005 m/s，32 个有评分完全相同的更快有效轨迹。延长预测时长可增加低速轨迹在栅格上的可分辨程度。仅将 `sim_time` 从 1.05 s 改到 1.70 s，准备慢行与绕障转弯的指令速度中位数均从约 0.021 m/s 提到约 0.035 m/s，开放 0.20 m/s 样本的中位数保持约 0.152 m/s。
+- 同期限的闭环模拟中，开阔 WGS84 在 40 s 内由超时改为 34.142 s 停稳到点。完整箱体在 150 s 期限下由 117.681 s 降至 67.846 s，均零接触且通过停稳地理复核。候选最小模拟足迹净距 0.238 m，原版 0.173 m。证据 `/home/ugv/workspace/slicer-navigation-dwa/field-data/dwa-performance/summary.txt`。
+- `candidate-dwa-horizon-170` 单独封存 `0e44bca`，安装参数读回仅预测时长为 1.70 s。交付候选默认保持已实车使用的 1.05 s。当前未实车验证 1.70 s。
+
+### V1.10 交付入口与 BT/UI 联调
+
+- 封存 `37c2033` 包含 `./run`、`./run ui`、操作手册、BT 公共接口与可直接运行的客户端示例。默认室外用 V1.10、0.10 m/s 与实时 RTK 融合，可经配置选 0.20 m/s，也可切换本地运行。室外接收节点在现有串口所有权内请求 1 Hz GST。V1.10 镜像与摘要随包交付，镜像 SHA-256 与已读回验证的版本一致。正式选择仍指向保留的 V1.9 发布。
+- 从该封存安装运行 44 项单测，全部通过。从同一安装在 Xorg 和独立 ROS mock 实际启动 UI，验证本地和 WGS84 的预览、发目标、终态停稳及录包。公开 BT 示例两种目标均成功，Ctrl+C 仅取消该 GoalID，并在返回停稳结果后以 130 退出。隔离 mock 也核对了替换、旧取消、控制与舵机接口。证据 `field-data/verification/delivery-client-smoke-Lk1hu7HC/run-TKgsrcwE`。正式入口的室外、室内、0.20 m/s 配置与单节点职责在不打开设备的情况下解析验证。证据 `field-data/verification/delivery-entry-37c2033`。
+
+### 8.7 m 双障碍与行进换点模拟
+
+- 用正式规划链及模拟传感器，0.20 m/s、两处错开的完整箱体、实时 RTK 融合，A 到 B 共用 135 s。原配置 `b726aef` 越过第一个箱体后以 0.191 m/s 换点，A 返回 `REPLACED`。B 复用配准版本 1，越过第二个箱体，足迹 0 接触，于 135.016 s 返回 `TIMEOUT`，停稳时合成 RTK 距 B 约 1.50 m。证据 `field-data/verification/competition-progression-47Usuo7X/run-DGqeKipC`。
+- 1.70 s 封存候选 `0e44bca` 使用同一速度、几何与任务期限。37.16 s 越过首箱后，以 0.197 m/s 行进换点，A 返回 `REPLACED`。B 复用配准版本 1，并于 69.793 s 返回 `SUCCESS`，确认停稳、合成 RTK 误差 0.1856 m。两箱均越过且 1448 个模拟足迹样本零接触。证据 `field-data/verification/competition-progression-47Usuo7X/run-rjFvLFN4`。
