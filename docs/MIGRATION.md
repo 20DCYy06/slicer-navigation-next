@@ -220,3 +220,8 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 
 - 封存 `1290628` 在 B 点重采并静态通过 3.46 m 路线，清除右侧可移物件后两侧扫掠通过。挡板前沿距起点约 2.387 m，箱尾到 B 约 0.60 m。单次实车任务发送后，全局规划 52 次报告 `goal violates hard clearance`，5.249 s 返回 `NO_PATH`。底盘命令为零，车未起步，实测停稳并回 Hold。实车录包与 `summary.txt` 位于 `field-data/verification/field-wgs84-full-box-endpoint-S7VVfi/full-box`。
 - 继续用局部足迹扫掠完整的 2.00 m 配准走廊，私有准备目标在已检查的走廊内回收 0.25 m，预留局部足迹和全局规划圆形硬净距之间的差异。保持 1.20 m 配准基线、规划器硬净距和速度限制。用实车前的车身姿态和 16 帧录制栅格重放，2.00 m 停车点全部落在硬净距内，1.75 m 停车点全部通过，对应最近致命格由 0.30 m 增至 0.60 m。新增回归验证 1.75 m 目标仍要求完整 2.00 m 走廊无占用。证据 `preparation-goal-replay.txt` 与同一实车录包并存。
+
+### 98cf1a7 同车位绕障续测
+
+- 42 项单测通过并封存 `98cf1a7`。重启后 Hold 下 Fixed 对照移位 0.024 m，保留物理 B 点、箱体和空场调查。待新栅格补齐后，两侧、停车点和配准段复核通过。实测箱体前沿距起点约 2.386 m，箱尾到 B 约 0.58 m。用户现场确认一条全流程目标，启用实时 RTK 融合，指令上限 0.10 m/s。
+- 约 17.36 s 拟合成功进入配准停车，19.23 s 提交版本 1 并投影，19.34 s 进入正式导航。之后 57 次全局规划报告 `start violates hard clearance`，约 70.52 s 返回 `NO_PATH`。录包最终前向 2.141 m、侧向 0.378 m，未进入箱体纵向范围。未进入停稳 RTK 到点复核。实测停稳、回 Hold、零输出并释放设备。录包共 1412 个 Fixed、71 个同历元 GST，发布了 1035 个对齐 GNSS XY 观测。证据 `field-data/verification/field-wgs84-full-box-restart-vPYqQQ/full-box/summary.txt` 及同目录录包。
