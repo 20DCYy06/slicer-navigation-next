@@ -56,7 +56,7 @@ GNSS 串口只有一个持有者。确认现场有人可随时关闭实体驱动
   `install/setup.bash` 加载环境，再运行 `roslaunch slicer_bringup ugv_mock.launch`。
   同一环境可运行 `rosrun slicer_bringup operator_ui.py`。用 `scenario:=` 选择
   `preparing`、`path_failure`、`gnss_loss`、`manual_override`、`estop` 或 `stop_unconfirmed`。
-- 静态雷达排查时先断开实体驱动。在独立 ROS Master 启动
+- 静态雷达排查时保持车身停稳，使用独立 ROS Master 启动仅采集定位及感知的入口。
   `roslaunch slicer_bringup ugv.launch start_lio:=true start_perception:=true`。
   输出稳定后用 `rosrun slicer_bringup record_run.py --perception-snapshot` 录制约 8 秒。
   对比两次录包时固定车位与朝向。

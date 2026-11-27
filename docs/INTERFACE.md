@@ -8,7 +8,7 @@ ROS1 Noetic。BT 只需要 `slicer_interfaces` 生成的消息与下表公开入
 | `/ugv/status` | `slicer_interfaces/UgvStatus` | 约 10 Hz。每条观测使用其原始时间和有效性，终态与当前任务分别保存。 |
 | `/ugv/control/hold`、`/ugv/control/release` | `slicer_interfaces/Control` | 空请求，返回 `accepted`、`reason`。Hold 抑制自主及任务运动。Release 解除 hold，原任务需重发，急停独立处理。 |
 | `/ugv/cmd_vel/mission` | `geometry_msgs/TwistStamped` | 同机 ROS 时钟。位置系 `base_link`，`linear.x` m/s、`angular.z` rad/s。持续发送时戳递增的新指令，0.25 秒过期。可用任务源接管时撤销旧导航权限。 |
-| `/ugv/actuators/servo` | `slicer_interfaces/Servo` | V1.9 通道 1，脉宽 500–2500 μs。应答只确认协议回执。 |
+| `/ugv/actuators/servo` | `slicer_interfaces/Servo` | C30D 通道 1，脉宽 500–2500 μs。应答只确认协议回执。 |
 
 ## 目标和状态
 
