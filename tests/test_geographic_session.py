@@ -89,6 +89,20 @@ class GeographicSessionTest(unittest.TestCase):
                 self.assertAlmostEqual(fit.translation[1], TRANSLATION[1])
                 self.assertAlmostEqual(fit.rmse_m, 0.0)
 
+    def test_alignment_keeps_an_endpoint_that_completes_the_baseline(self):
+        positions = (0.0, 0.21, 0.42, 0.63, 0.84, 1.05, 1.23)
+        pairs = []
+        for index, x in enumerate(positions):
+            stamp = SECOND + index * (SECOND // 4)
+            enu = rotate_xy((x + LEVER[0] - TRANSLATION[0], -TRANSLATION[1]), -YAW)
+            pairs.append(AlignmentPair(PlanarPose(stamp, x, 0.0, 0.0), enu))
+
+        self.assertAlmostEqual(fit_trajectory(pairs, LEVER).yaw, YAW)
+        with self.assertRaisesRegex(ValueError, "insufficient spatial baseline"):
+            fit_trajectory(pairs[:-1], LEVER)
+        with self.assertRaisesRegex(ValueError, "insufficient spatial baseline"):
+            fit_trajectory([*pairs[:-1], replace(pairs[-1], antenna_en=pairs[-2].antenna_en)], LEVER)
+
     def test_static_turn_and_discontinuous_track_do_not_produce_heading(self):
         for pairs in (track(stationary=True), track(gap=True)):
             with self.assertRaisesRegex(ValueError, "distinct positions|baseline"):

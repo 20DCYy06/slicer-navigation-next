@@ -126,6 +126,12 @@ def fit_trajectory(pairs, antenna_offset, limits=AlignmentLimits()):
             selected.append(pair)
     if len(selected) < limits.min_samples:
         raise ValueError("alignment needs more distinct positions")
+    if _baseline(selected) < limits.min_baseline_m:
+        # The latest pair may extend the baseline while sitting within one
+        # spacing interval of the last retained point. Replace that point.
+        if all(math.dist(pair.map_pose.xy, other.map_pose.xy) >= limits.spacing_m
+               for other in selected[:-1]):
+            selected[-1] = pair
     fit, residuals = _rigid_fit(selected, antenna_offset, limits.min_baseline_m)
     cutoff = max(2.0 * limits.max_residual_m, 3.0 * median(residuals))
     inliers = [pair for pair, residual in zip(selected, residuals) if residual <= cutoff]
