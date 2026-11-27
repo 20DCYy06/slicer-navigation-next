@@ -24,6 +24,8 @@ cd /home/ugv/workspace/slicer-navigation-next
 
 在同一桌面另开终端，进入同一工作区后运行 `./current/run ui`。车端和 UI 使用同一个 `ROS_MASTER_URI`，未设置时使用本机 ROS Master。BT 从同一安装环境调用[公开 Action、服务与状态](INTERFACE.md)。
 
+接口版 `interfaces-v1.0.0` 使用 `slicer_interfaces` 1.0.0。切换到这版发布时，从选定发布的同一个安装环境重新构建视觉与 BT，再启动车端和各客户端。用 `rosmsg md5 slicer_interfaces/UgvStatus` 核对各环境的消息指纹。
+
 监督测试其他封存候选时，在其 `releases/<源码提交>/` 目录直接使用 `./run` 和 `./run ui`。
 
 ## 发目标、停车与录包
@@ -39,7 +41,7 @@ cd /home/ugv/workspace/slicer-navigation-next
 
 ## 视觉伺服
 
-采用视觉组提供的独立安装，两边使用同一 ROS Master。先运行导航车端，再在另一终端加载导航与视觉安装并启动视觉节点。
+采用[视觉仓库](https://github.com/20DCYy06/slicer-visual-grasp)提供的独立安装。导航和视觉可各自启动，在车上联动时使用同一 ROS Master。先运行导航车端，再在另一终端加载导航与视觉安装并启动视觉节点。
 
 ```bash
 NAV="$HOME/workspace/slicer-navigation-next"
@@ -72,8 +74,8 @@ V1.9 回退同时恢复固件和软件发布。
 - 依赖导入、构建与封存命令见仓库根目录 `README.md`。
 - Mock 可用 `tools/build_candidate.sh --mock-only -j2` 构建。在独立 ROS Master 下从新
   `install/setup.bash` 加载环境，再运行 `roslaunch slicer_bringup ugv_mock.launch`。
-  同一环境可运行 `rosrun slicer_bringup operator_ui.py`。用 `scenario:=` 选择
-  `preparing`、`path_failure`、`gnss_loss`、`manual_override`、`estop` 或 `stop_unconfirmed`。
+  同一环境可运行 `rosrun slicer_operator_ui operator_ui.py`。Mock 默认 Hold，
+  联调时按[接口说明](INTERFACE.md#配置与调用示例)解除 Hold 或注入故障。
 - 静态雷达排查时保持车身停稳，使用独立 ROS Master 启动仅采集定位及感知的入口。
   `roslaunch slicer_bringup ugv.launch start_lio:=true start_perception:=true`。
   输出稳定后用 `rosrun slicer_bringup record_run.py --perception-snapshot` 录制约 8 秒。

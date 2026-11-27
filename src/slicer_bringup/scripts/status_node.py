@@ -20,6 +20,8 @@ NAVIGATION_FIELDS = (
 GEO_FIELDS = (
     "gnss_fix_type", "gnss_valid", "gnss_stamp", "gnss_received_stamp",
     "alignment_state", "transform_version", "geographic_reason",
+    "wgs84_latitude_deg", "wgs84_longitude_deg", "wgs84_valid", "wgs84_stamp",
+    "yaw_enu_rad", "yaw_enu_valid", "yaw_enu_stamp",
 )
 
 
@@ -76,6 +78,7 @@ class StatusNode:
             status.navigation_reason = "导航状态已过期"
         if "geographic" not in sources or not fresh(sources["geographic"].header.stamp, now, 1.5):
             status.gnss_valid = False
+            status.wgs84_valid = status.yaw_enu_valid = False
             status.alignment_state = UgvStatus.ALIGNMENT_UNAVAILABLE
             status.geographic_reason = "地理状态不可用"
         self._publisher.publish(status)

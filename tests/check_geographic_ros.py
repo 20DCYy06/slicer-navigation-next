@@ -77,6 +77,7 @@ def check(plant):
     assert action.wait_for_server(rospy.Duration(12)), "public action not online"
     wait_for(lambda: snapshots and snapshots[-1].gnss_valid and snapshots[-1].pose_valid
              and snapshots[-1].base_online and snapshots[-1].stopped, timeout=12)
+    assert not snapshots[-1].wgs84_valid and not snapshots[-1].yaw_enu_valid, snapshots[-1]
     assert plant.motion_count == 0, "startup moved before a goal"
     release = rospy.ServiceProxy("/ugv/control/release", Control)
     assert release().accepted, "simulated release rejected"
@@ -112,6 +113,14 @@ def check(plant):
     assert result.error_source == "gnss_xy", result
     assert any(value.projected_target_valid and value.transform_version == 1 for value in feedback)
     assert math.hypot(plant.x - 2.65, plant.y) < 0.30, (plant.x, plant.y)
+    wait_for(lambda: snapshots[-1].wgs84_valid and snapshots[-1].yaw_enu_valid)
+    geographic = snapshots[-1]
+    assert geographic.wgs84_stamp in tuple(plant.source_stamps), geographic
+    assert 0.0 <= (geographic.header.stamp - geographic.yaw_enu_stamp).to_sec() < 0.5, geographic
+    east = math.radians(geographic.wgs84_longitude_deg) * EARTH_EAST_M
+    north = math.radians(geographic.wgs84_latitude_deg) * EARTH_NORTH_M
+    assert math.hypot(east - plant.x, north - plant.y) < 0.04, geographic
+    assert abs(geographic.yaw_enu_rad - plant.yaw) < 0.08, geographic
     if rospy.get_param("/ugv/internal/slicer_navigate/enable_gnss_fusion", False):
         wait_for(lambda: fused_inputs)
         observation = fused_inputs[-1]

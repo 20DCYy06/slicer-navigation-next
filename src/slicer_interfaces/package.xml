@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="2">
   <name>slicer_interfaces</name>
-  <version>0.1.0</version>
+  <version>1.0.0</version>
   <description>Typed ROS interfaces for the Slicer navigation product.</description>
   <maintainer email="maintainers@slicer.invalid">Slicer maintainers</maintainer>
   <license>Proprietary</license>

@@ -192,6 +192,17 @@ class RosGeographicSession:
         if not self.operational:
             message.geographic_reason = "Geographic navigation is disabled pending localization replay or validation"
         elif session.version:
+            position = session.base_geographic_position(now_ns)
+            if position is not None:
+                point, stamp_ns = position
+                message.wgs84_latitude_deg, message.wgs84_longitude_deg = point.latitude, point.longitude
+                message.wgs84_stamp = _time(stamp_ns)
+                message.wgs84_valid = True
+            heading = session.heading_enu(now_ns)
+            if heading is not None:
+                message.yaw_enu_rad, stamp_ns = heading
+                message.yaw_enu_stamp = _time(stamp_ns)
+                message.yaw_enu_valid = True
             message.alignment_state = message.ALIGNMENT_DEGRADED
             if not session.fix_fresh(now_ns):
                 message.geographic_reason = "No fresh RTK Fixed position"

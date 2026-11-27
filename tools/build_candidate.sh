@@ -10,7 +10,7 @@ rm -f install/.slicer-candidate-revision
 if [[ ${1:-} == --mock-only ]]; then
     shift
     exec catkin_make install -DPYTHON_EXECUTABLE=/usr/bin/python3 \
-        '-DCATKIN_WHITELIST_PACKAGES=slicer_interfaces;slicer_bringup' "$@"
+        '-DCATKIN_WHITELIST_PACKAGES=slicer_interfaces;slicer_bringup;slicer_operator_ui' "$@"
 fi
 
 /usr/bin/python3 - "$root" <<'PY'

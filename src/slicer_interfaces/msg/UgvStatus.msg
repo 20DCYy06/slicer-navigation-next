@@ -44,3 +44,13 @@ string last_goal_id
 uint16 last_result_code
 bool last_result_valid
 time last_result_stamp
+
+# Horizontal WGS84 position of base_link, from time-paired RTK with the antenna lever arm removed.
+float64 wgs84_latitude_deg
+float64 wgs84_longitude_deg
+bool wgs84_valid
+time wgs84_stamp
+# Body heading in the aligned ENU frame. East is zero, positive counter-clockwise.
+float64 yaw_enu_rad
+bool yaw_enu_valid
+time yaw_enu_stamp

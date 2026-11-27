@@ -52,6 +52,7 @@ class Task:
     stop_stamp: object = None
     stop_deadline: float = 0.0
     stop_call: object = None
+    external_stop: bool = False
     verify_deadline: float = 0.0
     arrival: object = None
 
@@ -246,14 +247,15 @@ class NavigationServer:
             elif kind == "interrupted":
                 goal_id, issue = value
                 if self.task is not None and self.task.goal_id == goal_id:
-                    self.release(self.task)
-                    self.finish(self.task, *issue)
+                    self.begin_interruption(self.task, *issue)
             elif kind == "goal":
                 if self.task:
                     old = self.task
                     preserve_preparation = old.preparation and value.goal.mode == Goal.WGS84
                     self.release(old)
-                    if old.stop_code == Result.CANCELED:
+                    if old.external_stop:
+                        self.finish(old, old.stop_code, old.reason, preserve_preparation)
+                    elif old.stop_code == Result.CANCELED:
                         code = Result.CANCELED if self.stop_confirmed(old) else Result.STOP_NOT_CONFIRMED
                         self.finish(old, code, old.reason, preserve_preparation)
                     else:
@@ -261,14 +263,18 @@ class NavigationServer:
                 self.task = value
 
     def control_failure(self, base, task=None):
-        if base is None or not fresh(base.header.stamp, .5) or not base.base_online:
+        if base is None or not fresh(base.header.stamp, .5):
             return Result.BASE_FAULT, "Base feedback unavailable"
         if base.estop:
             return Result.ESTOP, "Emergency stop is active"
+        if not base.base_online:
+            return Result.BASE_FAULT, "Base feedback unavailable"
         if base.manual_override:
             return Result.MANUAL_OVERRIDE, "Manual control is active"
         if base.hold:
             return Result.HELD, "Autonomous motion is held"
+        if base.active_velocity_source == "mission":
+            return Result.HELD, "Mission control is active"
         if task and task.control_epoch is not None and task.control_epoch != base.control_epoch:
             return Result.HELD, "Base control authority changed"
         return None
@@ -292,16 +298,15 @@ class NavigationServer:
             issue = self.control_failure(base, task)
             if task.stop_code == Result.SUCCESS and issue and issue[0] in (
                     Result.ESTOP, Result.MANUAL_OVERRIDE, Result.HELD):
-                self.finish(task, *issue)
-            else:
-                self.confirm_stop(task, now)
+                self.begin_interruption(task, *issue)
+                return
+            self.confirm_stop(task, now)
             return
         issue = self.control_failure(base, task)
         if issue:
             if issue[0] == Result.BASE_FAULT and now - task.accepted <= self.startup_timeout and task.grant is None:
                 return
-            self.release(task)
-            self.finish(task, *issue)
+            self.begin_interruption(task, *issue)
             return
         if now >= task.deadline:
             self.begin_stop(task, Result.TIMEOUT, "Navigation deadline exceeded")
@@ -457,7 +462,10 @@ class NavigationServer:
             return
         if task.grant.error or not task.grant.value.accepted:
             reason = str(task.grant.error) if task.grant.error else task.grant.value.reason
-            self.begin_stop(task, Result.BASE_FAULT, "Base rejected navigation authority: " + reason)
+            if not task.grant.error and reason == "mission command stream owns motion":
+                self.begin_interruption(task, Result.HELD, reason)
+            else:
+                self.begin_stop(task, Result.BASE_FAULT, "Base rejected navigation authority: " + reason)
             return
         task.drive_target.header.stamp = rospy.Time.now()
         self.move_base.start(task.drive_target)
@@ -485,6 +493,8 @@ class NavigationServer:
             task.stop_call = self.last_disable = self.services.submit(self.claim, task.goal_id, False, task.control_epoch)
 
     def begin_stop(self, task, code, reason):
+        if task.external_stop:
+            return
         if task.stop_code == code and task.phase == Feedback.STOPPING:
             return
         self.release(task)
@@ -492,11 +502,16 @@ class NavigationServer:
         task.stop_stamp = rospy.Time.now()
         task.stop_deadline = monotonic() + self.stop_timeout
 
+    def begin_interruption(self, task, code, reason):
+        if not task.external_stop:
+            self.begin_stop(task, code, reason)
+            task.external_stop = True
+
     def observed_stop(self, task):
         base = self.base
         valid = (base is not None and fresh(base.header.stamp, .5) and base.stop_valid
                  and base.velocity_valid and fresh(base.velocity.header.stamp, self.stop_freshness)
-                 and (task.stop_stamp is None or base.velocity.header.stamp > task.stop_stamp))
+                 and task.stop_stamp is not None and base.velocity.header.stamp > task.stop_stamp)
         return valid, bool(valid and base.stopped)
 
     def stop_confirmed(self, task):
@@ -507,6 +522,13 @@ class NavigationServer:
         return task.stop_call.done and self.base is not None and self.base.nav_goal_id != task.goal_id
 
     def confirm_stop(self, task, now):
+        if task.external_stop:
+            valid, stopped = self.observed_stop(task)
+            other_owner = self.base is not None and (
+                self.base.manual_override or self.base.active_velocity_source == "mission")
+            if (valid and (stopped or other_owner)) or now >= task.stop_deadline:
+                self.finish(task, task.stop_code, task.reason)
+            return
         if not self.stop_confirmed(task):
             if now < task.stop_deadline:
                 return
@@ -571,9 +593,10 @@ class NavigationServer:
         if task.preparation and not preserve_preparation:
             self.geo.cancel_preparation()
         result = self.result_for(task.goal, code, reason)
-        result.stop_commanded = bool(task.stop_call is not None and task.stop_call.done and
-            task.stop_call.error is None and task.stop_call.value.accepted)
-        result.stop_valid, result.stopped = self.observed_stop(task)
+        if code != Result.REPLACED:
+            result.stop_commanded = bool(not task.external_stop and task.stop_call is not None and task.stop_call.done
+                                         and task.stop_call.error is None and task.stop_call.value.accepted)
+            result.stop_valid, result.stopped = self.observed_stop(task)
         pose = self.current_pose()
         if task.target is not None and pose is not None:
             error, yaw_error = pose_error(pose.pose.pose, task.target.pose, task.goal.has_yaw)

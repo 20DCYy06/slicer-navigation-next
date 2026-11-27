@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from actionlib_msgs.msg import GoalStatus
 from slicer_interfaces.msg import NavigateToPointResult
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/slicer_bringup/scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/slicer_operator_ui/scripts"))
 from operator_ui import grasp_result_text, result_text
 
 

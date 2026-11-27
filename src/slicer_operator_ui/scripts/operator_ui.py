@@ -182,6 +182,7 @@ class Operator:
         self.active = False
         self.preview = None
         self.recorder = None
+        self.record_executable = os.environ.get("SLICER_RECORD_RUN")
         self.last_status = rospy.Time()
         self.base = None
         self.motion_available = False
@@ -243,6 +244,9 @@ class Operator:
         )
         self.record_button = ttk.Button(panel, text="开始录包", command=self.record)
         self.record_button.grid(row=8, column=1, sticky="ew", padx=3)
+        if not self.record_executable:
+            self.record_button.state(["disabled"])
+            self.record_text.set("录包工具未配置")
         self.grasp = GraspPanel(panel, self.events)
         self.grasp.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         self.cancel_button.state(["disabled"])
@@ -324,6 +328,8 @@ class Operator:
         Thread(target=call, daemon=True).start()
 
     def record(self):
+        if not self.record_executable:
+            return
         if self.recorder is not None:
             if self.recorder.poll() is None:
                 os.killpg(self.recorder.pid, signal.SIGINT)
@@ -332,7 +338,7 @@ class Operator:
             return
         try:
             self.recorder = subprocess.Popen(
-                ["rosrun", "slicer_bringup", "record_run.py"],
+                [self.record_executable],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, start_new_session=True,
             )

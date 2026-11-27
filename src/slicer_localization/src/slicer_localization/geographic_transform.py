@@ -70,6 +70,18 @@ class EnuFrame:
         return tuple(sum(axis_value * value for axis_value, value in zip(axis, delta))
                      for axis in self._axes)
 
+    def horizontal_geodetic(self, enu):
+        """Recover latitude and longitude from a position near the WGS84 surface."""
+        x, y, z = (origin + sum(component * coefficient for component, coefficient in zip(enu, axis))
+                   for origin, axis in zip(self._ecef, zip(*self._axes)))
+        horizontal = math.hypot(x, y)
+        minor = WGS84_A * (1.0 - WGS84_F)
+        second_eccentricity_sq = WGS84_E2 / (1.0 - WGS84_E2)
+        auxiliary = math.atan2(z * WGS84_A, horizontal * minor)
+        latitude = math.atan2(z + second_eccentricity_sq * minor * math.sin(auxiliary) ** 3,
+                              horizontal - WGS84_E2 * WGS84_A * math.cos(auxiliary) ** 3)
+        return GeoPoint(math.degrees(latitude), math.degrees(math.atan2(y, x)))
+
 
 @dataclass(frozen=True)
 class MapFromEnu:

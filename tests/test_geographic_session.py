@@ -77,6 +77,9 @@ class GeographicSessionTest(unittest.TestCase):
         self.assertAlmostEqual(north, 0.0, places=8)
         self.assertAlmostEqual(up, 5.0, places=7)
         self.assertAlmostEqual(enu.project(GeoPoint(0.0, 179.99999))[2], 0.0, places=8)
+        wrapped = enu.horizontal_geodetic(enu.project(GeoPoint(0.0002, -179.9998, 63.0)))
+        self.assertAlmostEqual(wrapped.latitude, 0.0002, places=10)
+        self.assertAlmostEqual(wrapped.longitude, -179.9998, places=10)
         with self.assertRaises(ValueError):
             enu.project(GeoPoint(91.0, 0.0))
 
@@ -162,6 +165,8 @@ class GeographicSessionTest(unittest.TestCase):
 
     def test_stopped_commit_versions_goals_and_requires_new_fix_for_arrival(self):
         session = GeographicSession(LEVER, ORIGIN)
+        self.assertIsNone(session.base_geographic_position(SECOND))
+        self.assertIsNone(session.heading_enu(SECOND))
         with self.assertRaises(GeographicUnavailable):
             session.project(0.0, 0.0)
         session.begin_preparation()
@@ -187,6 +192,24 @@ class GeographicSessionTest(unittest.TestCase):
         self.assertAlmostEqual(projected.x, 3.0, places=5)
         self.assertAlmostEqual(projected.y, -4.0, places=5)
         self.assertFalse(session.verify(projected, last_stamp, last_stamp + 20, 0.2).valid)
+
+        paired_stamp = last_stamp + 50_000_000
+        sample = pairs[-1].map_pose
+        session.add_map_pose(PlanarPose(paired_stamp, sample.x, sample.y, sample.yaw))
+        session.add_lio_pose(PlanarPose(paired_stamp, sample.x, sample.y, sample.yaw))
+        paired_antenna = EnuFrame(ORIGIN).horizontal_geodetic((*pairs[-1].antenna_en, 0.0))
+        session.observe(observation(paired_stamp, replace(paired_antenna, altitude_ellipsoid_m=30.0)),
+                        paired_stamp + 20)
+        compensated, position_stamp = session.base_geographic_position(paired_stamp + 20)
+        compensated_en = EnuFrame(ORIGIN).project(compensated)[:2]
+        expected_en = rotate_xy((sample.x - TRANSLATION[0], sample.y - TRANSLATION[1]), -YAW)
+        self.assertAlmostEqual(math.dist(compensated_en, expected_en), 0.0, places=7)
+        self.assertEqual(position_stamp, paired_stamp)
+        heading, heading_stamp = session.heading_enu(paired_stamp + 20)
+        self.assertAlmostEqual(heading, sample.yaw - YAW)
+        self.assertEqual(heading_stamp, paired_stamp)
+        self.assertIsNone(session.base_geographic_position(paired_stamp + SECOND))
+        self.assertIsNone(session.heading_enu(paired_stamp + SECOND))
 
         stamp = last_stamp + 100_000_000
         sample = pairs[-1].map_pose

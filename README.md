@@ -15,6 +15,7 @@ cd /home/ugv/workspace/slicer-navigation-next
 
 - [现场操作、停车、录包及 V1.9 回退](docs/FIELD_OPERATIONS.md)
 - [BT 导航、底盘与视觉接口](docs/INTERFACE.md) · [公共消息包](src/slicer_interfaces) · [导航—视觉—导航示例](docs/examples/nav_grasp_nav.py)
+- [独立视觉仓库](https://github.com/20DCYy06/slicer-visual-grasp)
 - [迁移与验证记录](docs/MIGRATION.md)
 
 ## 从源码构建
