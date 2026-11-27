@@ -1,6 +1,8 @@
 <launch>
   <arg name="scenario" default="success"/>
+  <arg name="vision" default="false"/>
   <node pkg="slicer_bringup" type="mock_node.py" name="ugv_mock" required="true" output="screen">
     <param name="scenario" value="$(arg scenario)"/>
+    <param name="vision" value="$(arg vision)" type="bool"/>
   </node>
 </launch>

@@ -4,6 +4,7 @@
 
 - 团队仓库为 [20DCYy06/slicer-navigation-next](https://github.com/20DCYy06/slicer-navigation-next)。Jetson 日常导航工作区为 `/home/ugv/workspace/slicer-navigation-next`，车端和界面从 `./current/run`、`./current/run ui` 启动。旧工作区入口保留用于历史和 V1.9 成套回退。
 - 首发以 `94ecf19` 为运行基线。与 `37c2033` 的差异仅为本记录。`performance/wgs84-dwa-170` 保留封存候选 `b0633df`。其规划优化已在 0.20 m/s 长直线、双挡板和行进换点实车验收后合入 `main`。接下来的导航性能开发在此工作区和仓库进行。
+- 四个完成使命的导航工作树已由 Git 移至本地 `slicer/archive/completed-dev/navigation-next-20261127/`，原分支、提交、录包和依赖检出均保留。独立固件、视觉工程、历史发布和旧任务工程留在各自原址。
 
 ## 车端基线
 
@@ -265,7 +266,7 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 ### DWA 性能候选
 
 - 用安装的 ROS DWA 对实车录包重算。35 个准备慢行快照中，34 个重现原前向指令至 0.005 m/s，32 个有评分完全相同的更快有效轨迹。延长预测时长可增加低速轨迹在栅格上的可分辨程度。仅将 `sim_time` 从 1.05 s 改到 1.70 s，准备慢行与绕障转弯的指令速度中位数均从约 0.021 m/s 提到约 0.035 m/s，开放 0.20 m/s 样本的中位数保持约 0.152 m/s。
-- 同期限的闭环模拟中，开阔 WGS84 在 40 s 内由超时改为 34.142 s 停稳到点。完整箱体在 150 s 期限下由 117.681 s 降至 67.846 s，均零接触且通过停稳地理复核。候选最小模拟足迹净距 0.238 m，原版 0.173 m。证据 `/home/ugv/workspace/slicer-navigation-dwa/field-data/dwa-performance/summary.txt`。
+- 同期限的闭环模拟中，开阔 WGS84 在 40 s 内由超时改为 34.142 s 停稳到点。完整箱体在 150 s 期限下由 117.681 s 降至 67.846 s，均零接触且通过停稳地理复核。候选最小模拟足迹净距 0.238 m，原版 0.173 m。证据 `slicer/archive/completed-dev/navigation-next-20261127/slicer-navigation-dwa/field-data/dwa-performance/summary.txt`（相对 Jetson 工作区）。
 - `candidate-dwa-horizon-170` 单独封存 `0e44bca`，安装参数读回仅预测时长为 1.70 s。交付候选默认保持已实车使用的 1.05 s。当前未实车验证 1.70 s。
 
 ### V1.10 交付入口与 BT/UI 联调
@@ -300,3 +301,8 @@ C30D 是 `/dev/c30d → ttyACM2`，115200 baud、60000 CPR，PWM 极性
 
 - 换电上电后在 `performance/speed-030` 的 `6870928` 封存候选验证 1.50 m 本地直行。配置相对 0.20 m/s 档仅改线速度上限，沿用 V1.10 及 1.70 s DWA 预测时长。发目标前确认 3.0 m 已观测足迹扫掠区、RTK Fixed/GST、定位新鲜、停稳与四轮零 PWM。
 - 只发送一条目标，10.284 s 返回 `SUCCESS`，地图误差 0.0648 m。Mux 指令峰值 0.2942 m/s，MCU 回显目标峰值 0.2940 m/s，MCU 实测速率峰值 0.3000 m/s。独立停稳 RTK、LIO 和轮速里程计的净位移分别为 1.4498 m、1.4504 m 和 1.4621 m。已确认新的 Hold 停稳，退出后释放两路串口并恢复 GST。此档验收范围为开阔短直行。证据 `field-data/verification/field-v110-speed-030-784kQE/straight`。
+
+### 团队交接与独立视觉接口
+
+- `c7a7319` 封存候选通过 46 项单测、ROS 导航 Mock 契约检查、带视觉 Mock 的 BT 顺序示例及现场 Tk UI 联调。验证了导航和视觉的界面互斥、发本动作、定向取消、失败消息、释放后续航，以及进程关闭。导航消息来自选定的封存安装，视觉 Action 来自独立视觉安装。证据 `field-data/verification/team-vision-smoke-nGEcBL`。
+- 视觉组已有软件测试在独立 ROS Master 使用相机、吸盘和底盘替身，通过抓取、释放、Guard 拦截和取消。当前现场未识别到视觉相机，确认设备到位后再做实车视觉动作。唯一正式启动入口的 `current` 选中 `v1.0.0`。9.27 m 双挡板实车验收继续作为 `b0633df` 的依据。此轮接入通过 PR 交接。
