@@ -9,6 +9,10 @@
       <rosparam command="load" file="$(find slicer_navigation)/config/planner.yaml"/>
       <rosparam command="load" file="$(find slicer_navigation)/config/costmaps.yaml"/>
     </node>
+    <node if="$(arg start_move_base)" pkg="topic_tools" type="relay" name="operator_map"
+          args="/ugv/internal/move_base/global_costmap/costmap /ugv/display/map">
+      <param name="lazy" value="true"/>
+    </node>
     <node pkg="slicer_navigation" type="navigate_server.py" name="slicer_navigate"
           output="screen" clear_params="true">
       <param name="enable_geographic_navigation" value="$(arg enable_geographic)"/>

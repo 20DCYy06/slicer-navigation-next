@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
-"""Thin field client for the public ROS action, state and control services."""
+"""Direct field client for the public navigation and visual ROS interfaces."""
+
 import math
 import os
+from pathlib import Path
+from queue import Empty, SimpleQueue
 import signal
 import subprocess
+import sys
 from threading import Thread
-from queue import Empty, SimpleQueue
-import tkinter as tk
-from tkinter import ttk
 
 import actionlib
-import rospy
 from actionlib_msgs.msg import GoalStatus, GoalStatusArray
+from diagnostic_msgs.msg import DiagnosticArray
+from geometry_msgs.msg import PoseStamped
+from PyQt5 import QtCore, QtWidgets
+import rospy
+from sensor_msgs.msg import NavSatFix, NavSatStatus
+
 from slicer_interfaces.msg import (
-    NavigateToPointAction, NavigateToPointFeedback as Feedback,
+    NavigateToPointAction, NavigateToPointActionFeedback, NavigateToPointFeedback as Feedback,
     NavigateToPointGoal as Goal, NavigateToPointResult as Result, UgvStatus,
 )
 from slicer_interfaces.srv import Control
+from slicer_operator_ui.map_panel import MapPanel
+from slicer_operator_ui.services import ServicePanel
 
 try:
     from slicer_visual_grasp.msg import GraspAction, GraspGoal
@@ -44,7 +52,7 @@ RESULT_NAMES = {
 def result_text(action_status, result):
     if result is None:
         return f"未收到导航结果（Action 状态 {action_status}） · 停稳未确认"
-    stopped = "已停稳" if result.stop_valid and result.stopped else "停稳未确认"
+    stopped = stop_label(result.stop_valid, result.stopped)
     parts = [str(RESULT_NAMES.get(result.code, result.code))]
     if result.reason:
         parts.append(result.reason)
@@ -69,77 +77,6 @@ def grasp_result_text(state, result):
 
 def fresh(stamp, limit=0.5):
     return not stamp.is_zero() and 0 <= (rospy.Time.now() - stamp).to_sec() <= limit
-
-
-class GraspPanel(ttk.LabelFrame):
-    busy_states = {GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.PREEMPTING, GoalStatus.RECALLING}
-
-    def __init__(self, parent, events):
-        super().__init__(parent, text="视觉伺服", padding=6)
-        self.client = actionlib.SimpleActionClient("/ugv/grasp", GraspAction) if GraspAction else None
-        self.events = events
-        self.connected = False
-        self.server_status = None
-        self.active = False
-        self.cancel_pending = False
-        self.state = tk.StringVar(value="等待视觉节点" if self.client else "未加载视觉消息包")
-        self.details = tk.StringVar()
-        self.pick_button = ttk.Button(self, text="启动抓取", command=lambda: self.send(self.pick_button, GraspGoal.PICK))
-        self.release_button = ttk.Button(self, text="释放", command=lambda: self.send(self.release_button, GraspGoal.RELEASE))
-        self.cancel_button = ttk.Button(self, text="取消本动作", command=self.cancel)
-        for column, button in enumerate((self.pick_button, self.release_button, self.cancel_button)):
-            button.grid(row=0, column=column, sticky="w", padx=3)
-            button.state(["disabled"])
-        for row, variable in enumerate((self.state, self.details), 1):
-            ttk.Label(self, textvariable=variable, wraplength=590, justify="left").grid(
-                row=row, column=0, columnspan=3, sticky="w", pady=2
-            )
-        if self.client is not None:
-            self.subscriber = rospy.Subscriber(
-                "/ugv/grasp/status", GoalStatusArray,
-                lambda message: events.put(("grasp_status", message)), queue_size=1,
-            )
-            Thread(target=self.wait_for_action, daemon=True).start()
-
-    def wait_for_action(self):
-        while not rospy.is_shutdown():
-            if self.client.wait_for_server(rospy.Duration(1.0)):
-                self.events.put(("grasp_connected", None))
-                return
-
-    def update(self, base_ready):
-        available = self.connected and self.server_status is not None and fresh(self.server_status.header.stamp, 1.0)
-        remote_busy = available and any(item.status in self.busy_states for item in self.server_status.status_list)
-        occupied = self.active or remote_busy
-        if self.client is not None:
-            if not available:
-                self.state.set("视觉连接中断，终态待确认" if self.active else "等待视觉节点")
-            else:
-                self.state.set("视觉动作执行中" if occupied else "视觉待命")
-        for button in (self.pick_button, self.release_button):
-            button.state(["!disabled" if available and not occupied and base_ready else "disabled"])
-        self.cancel_button.state(["!disabled" if self.active and not self.cancel_pending else "disabled"])
-        return occupied
-
-    def send(self, button, command):
-        if self.active or not button.instate(["!disabled"]):
-            return
-        self.active, self.cancel_pending = True, False
-        self.details.set("已发送视觉动作，等待结果")
-        self.update(False)
-        self.client.send_goal(GraspGoal(command=command),
-                              done_cb=lambda state, result: self.events.put(("grasp_result", (state, result))))
-
-    def cancel(self):
-        if self.active and not self.cancel_pending:
-            self.cancel_pending = True
-            self.client.cancel_goal()
-            self.details.set("已请求取消，等待视觉终态")
-            self.update(False)
-
-    def finish(self, state, result):
-        self.active, self.cancel_pending = False, False
-        self.details.set(grasp_result_text(state, result))
 
 
 def target(mode, first, second, altitude, yaw, verify):
@@ -173,147 +110,388 @@ def target(mode, first, second, altitude, yaw, verify):
     return goal, f"纬度 {latitude:.8f}°，经度 {longitude:.8f}°，{height}"
 
 
-class Operator:
-    def __init__(self, root):
-        self.root = root
-        self.client = actionlib.SimpleActionClient("/ugv/navigate", NavigateToPointAction)
-        self.events = SimpleQueue()
-        self.connected = False
+STYLE = """
+QWidget { color: #e6f2f7; background: #101d27; font-size: 15px; }
+QFrame[readout="true"] { background: #192d3a; border: 1px solid #345467; border-radius: 8px; }
+QFrame[readout="true"] QLabel { background: transparent; }
+QLabel[muted="true"] { color: #a7c1d0; font-size: 13px; }
+QLabel#SectionTitle { font-size: 17px; font-weight: 600; }
+QLabel[tone="ok"] { color: #83e6b3; }
+QLabel[tone="warn"] { color: #ffd488; }
+QLabel[tone="stop"] { color: #ff9d9c; }
+QPushButton, QComboBox, QLineEdit {
+    min-height: 36px; padding: 0px 8px; border: 1px solid #395b70;
+    border-radius: 6px; background: #203848;
+}
+QPushButton:hover, QPushButton:checked { background: #2d566d; }
+QPushButton[primary="true"] { background: #82d5e9; color: #10242e; font-weight: 600; }
+QPushButton[parking="true"] { border: 1px solid #ae6871; color: #ffc2bd; }
+QPushButton:disabled { background: #172630; color: #7d94a0; border-color: #293c47; }
+QLineEdit:disabled, QCheckBox:disabled { color: #8499a4; }
+QTabBar::tab { min-height: 38px; padding: 0px 12px; background: #1a2e3b; }
+QTabBar::tab:selected { background: #2b4f62; border-bottom: 2px solid #82d5e9; }
+QTabWidget::pane { border: 1px solid #395366; border-radius: 5px; }
+QPlainTextEdit { background: #12242f; border: 1px solid #395366; color: #cae2ee; }
+"""
+
+
+def caption(label, value, tone=None):
+    if label.text() != value:
+        label.setText(value)
+    if tone is not None and label.property("tone") != tone:
+        label.setProperty("tone", tone)
+        label.style().unpolish(label)
+        label.style().polish(label)
+
+
+def message(text=""):
+    label = QtWidgets.QLabel(text, wordWrap=True)
+    label.setTextFormat(QtCore.Qt.PlainText)
+    return label
+
+
+def button(label, callback, grid, row, column, span=1):
+    widget = QtWidgets.QPushButton(label)
+    widget.clicked.connect(callback)
+    grid.addWidget(widget, row, column, 1, span)
+    return widget
+
+
+def stop_label(valid, stopped):
+    if not valid:
+        return "停稳未确认"
+    return "已停稳" if stopped else "仍在运动"
+
+
+def receiver_fields(array):
+    for item in array.status:
+        if item.name == "cup_gnss/receiver":
+            return item.message, {entry.key: entry.value for entry in item.values}
+    return "", {}
+
+
+def value_text(value):
+    return "—" if value in ("", None, "unknown") else str(value)
+
+
+def map_coordinates(pose):
+    x, y = pose.pose.position.x, pose.pose.position.y
+    if pose.header.frame_id != "map" or not all(map(math.isfinite, (x, y))):
+        raise ValueError("地图选点需要 map 坐标")
+    return x, y
+
+
+def progress_text(feedback):
+    phase = PHASES.get(feedback.phase, "未知")
+    distance = f" · 剩余 {feedback.remaining_distance_m:.2f} m" if feedback.remaining_distance_valid else ""
+    return " · ".join(filter(None, (phase + distance, feedback.reason)))
+
+
+class GraspPanel(QtWidgets.QWidget):
+    busy_states = {GoalStatus.PENDING, GoalStatus.ACTIVE, GoalStatus.PREEMPTING, GoalStatus.RECALLING}
+
+    def __init__(self, events):
+        super().__init__()
+        self.events = events
+        self.client = None
+        self.server_status = None
         self.active = False
+        self.cancel_pending = False
+        layout = QtWidgets.QGridLayout(self)
+        self.state = message("等待视觉节点" if GraspAction else "未加载独立视觉消息包")
+        self.details = message()
+        layout.addWidget(self.state, 0, 0, 1, 2)
+        self.pick_button = button("启动抓取", lambda: self.send(self.pick_button, GraspGoal.PICK), layout, 1, 0)
+        self.release_button = button("释放", lambda: self.send(self.release_button, GraspGoal.RELEASE), layout, 1, 1)
+        self.cancel_button = button("取消本动作", self.cancel, layout, 2, 0, 2)
+        layout.addWidget(self.details, 3, 0, 1, 2)
+        layout.setRowStretch(4, 1)
+        self.update_actions(False)
+
+    def update_actions(self, base_ready):
+        available = self.client is not None and self.server_status is not None and fresh(self.server_status.header.stamp, 1.0)
+        remote_busy = available and any(item.status in self.busy_states for item in self.server_status.status_list)
+        occupied = self.active or remote_busy
+        if GraspAction:
+            if not available:
+                caption(self.state, "视觉连接中断，终态待确认" if self.active else "等待视觉节点")
+            else:
+                caption(self.state, "视觉动作执行中" if occupied else "视觉待命")
+        for widget in (self.pick_button, self.release_button):
+            widget.setEnabled(available and not occupied and base_ready)
+        self.cancel_button.setEnabled(self.active and not self.cancel_pending)
+        return occupied
+
+    def send(self, widget, command):
+        if self.active or not widget.isEnabled():
+            return
+        self.active, self.cancel_pending = True, False
+        caption(self.details, "已发送视觉动作，等待结果")
+        self.update_actions(False)
+        self.client.send_goal(GraspGoal(command=command),
+                              done_cb=lambda state, result: self.events.put(("grasp_result", (state, result))))
+
+    def cancel(self):
+        if self.active and not self.cancel_pending:
+            self.cancel_pending = True
+            self.client.cancel_goal()
+            caption(self.details, "已请求取消，等待视觉终态")
+            self.update_actions(False)
+
+    def finish(self, state, result):
+        self.active, self.cancel_pending = False, False
+        caption(self.details, grasp_result_text(state, result))
+
+
+class Operator(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.events = SimpleQueue()
+        self.client = None
+        self.nav_server_stamp = rospy.Time()
+        self.active = self.cancel_pending = self.closed = False
         self.preview = None
+        self.preview_mode = None
+        self.preview_pub = None
         self.recorder = None
+        self.saving_recording = False
+        self.recording_active = False
         self.record_executable = os.environ.get("SLICER_RECORD_RUN")
-        self.last_status = rospy.Time()
         self.base = None
-        self.motion_available = False
+        self.gnss = self.sigma = self.fix = None
         self.last_displayed_result = ""
+        self.local_result = False
         self.record_path = ""
-        rospy.Subscriber("/ugv/status", UgvStatus, lambda msg: self.events.put(("status", msg)),
-                         queue_size=1)
-        self.mode = tk.StringVar(value="本地 map")
-        self.verify = tk.BooleanVar(value=True)
-        self.status = tk.StringVar(value="等待 /ugv/status")
-        self.details = tk.StringVar(value="")
-        self.preview_text = tk.StringVar(value="")
-        self.record_text = tk.StringVar(value="")
-        self.values = [tk.StringVar() for _ in range(4)]
-        self.labels = [tk.StringVar() for _ in self.values]
+        self.ros_ready = False
         self.build()
-        for value in [self.mode, self.verify, *self.values]:
-            value.trace_add("write", self.invalidate_preview)
-        self.invalidate_preview()
-        self.root.after(80, self.drain_events)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
-        Thread(target=self.wait_for_action, daemon=True).start()
+        self.timer = QtCore.QTimer(self, interval=100)
+        self.timer.timeout.connect(self.drain_events)
+        self.timer.start()
+        Thread(target=self.connect_ros, daemon=True).start()
 
     def build(self):
-        self.root.title("Slicer 现场导航")
-        panel = ttk.Frame(self.root, padding=16)
-        panel.grid(sticky="nsew")
-        for row, variable in ((0, self.status), (1, self.details), (10, self.record_text)):
-            ttk.Label(panel, textvariable=variable, wraplength=620, justify="left").grid(
-                row=row, column=0, columnspan=4, sticky="w", pady=4
-            )
-        ttk.Combobox(panel, state="readonly", textvariable=self.mode,
-                     values=("本地 map", "WGS84"), width=16).grid(row=2, column=0, sticky="w")
-        for index, (label, value) in enumerate(zip(self.labels, self.values)):
-            row = 3 + index // 2
-            column = 2 * (index % 2)
-            ttk.Label(panel, textvariable=label).grid(row=row, column=column, sticky="w", pady=3)
-            entry = ttk.Entry(panel, textvariable=value, width=20)
-            entry.grid(row=row, column=column + 1, sticky="ew", padx=4)
-            if index == 2:
-                self.altitude_entry = entry
-        self.verify_box = ttk.Checkbutton(panel, text="地理到点复核", variable=self.verify)
-        self.verify_box.grid(row=5, column=0, columnspan=2, sticky="w")
-        ttk.Label(panel, textvariable=self.preview_text, wraplength=620).grid(
-            row=6, column=0, columnspan=4, sticky="w", pady=5
-        )
-        for column, (name, handler) in enumerate((
-            ("预览目标", self.preview_goal), ("启动导航", self.send), ("取消本目标", self.cancel),
-            ("驻车 Hold", lambda: self.control("hold")),
-        )):
-            button = ttk.Button(panel, text=name, command=handler)
-            button.grid(row=7, column=column, sticky="ew", padx=3, pady=4)
-            if column == 1:
-                self.send_button = button
-            if column == 2:
-                self.cancel_button = button
-        ttk.Button(panel, text="解除 Hold", command=lambda: self.control("release")).grid(
-            row=8, column=0, sticky="ew", padx=3
-        )
-        self.record_button = ttk.Button(panel, text="开始录包", command=self.record)
-        self.record_button.grid(row=8, column=1, sticky="ew", padx=3)
-        if not self.record_executable:
-            self.record_button.state(["disabled"])
-            self.record_text.set("录包工具未配置")
-        self.grasp = GraspPanel(panel, self.events)
-        self.grasp.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(8, 0))
-        self.cancel_button.state(["disabled"])
+        self.setWindowTitle("Slicer 现场操作")
+        self.resize(1120, 690)
+        self.setStyleSheet(STYLE)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        readouts = QtWidgets.QHBoxLayout()
+        self.readouts = []
+        for name in ("底盘", "RTK", "导航", "线速"):
+            box = QtWidgets.QFrame()
+            box.setProperty("readout", True)
+            items = QtWidgets.QVBoxLayout(box)
+            items.setSpacing(1)
+            title = message(name)
+            title.setProperty("muted", True)
+            value = message("等待连接")
+            items.addWidget(title)
+            items.addWidget(value)
+            readouts.addWidget(box, 1)
+            self.readouts.append(value)
+        layout.addLayout(readouts)
 
-    def wait_for_action(self):
-        while not rospy.is_shutdown():
-            if self.client.wait_for_server(rospy.Duration(1.0)):
-                self.events.put(("connected", None))
-                return
+        self.map = MapPanel()
+        split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        split.addWidget(self.map)
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setMinimumWidth(312)
+        split.addWidget(self.tabs)
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 1)
+        split.setCollapsible(0, False)
+        split.setCollapsible(1, False)
+        layout.addWidget(split, 1)
+
+        nav = QtWidgets.QWidget()
+        self.tabs.addTab(nav, "导航")
+        form = QtWidgets.QGridLayout(nav)
+        form.setColumnStretch(1, 1)
+        self.mode = QtWidgets.QComboBox()
+        self.mode.addItems(("本地 map", "WGS84"))
+        form.addWidget(self.mode, 0, 0, 1, 2)
+        self.fields, self.labels = [], []
+        for index in range(4):
+            label = message()
+            value = QtWidgets.QLineEdit()
+            value.setInputMethodHints(QtCore.Qt.ImhFormattedNumbersOnly)
+            value.textChanged.connect(self.invalidate_preview)
+            self.labels.append(label)
+            self.fields.append(value)
+            form.addWidget(label, index + 1, 0)
+            form.addWidget(value, index + 1, 1)
+        self.verify = QtWidgets.QCheckBox("地理到点复核", checked=True)
+        self.verify.toggled.connect(self.invalidate_preview)
+        form.addWidget(self.verify, 5, 0, 1, 2)
+        self.preview_text = message()
+        form.addWidget(self.preview_text, 6, 0, 1, 2)
+        button("预览目标", self.preview_goal, form, 7, 0)
+        self.send_button = button("启动导航", self.send, form, 7, 1)
+        self.send_button.setProperty("primary", True)
+        self.cancel_button = button("取消本目标", self.cancel, form, 8, 0, 2)
+        self.details = message()
+        form.addWidget(self.details, 9, 0, 1, 2)
+        form.setRowStretch(10, 1)
+        self.mode.currentIndexChanged.connect(self.mode_changed)
+
+        rtk = QtWidgets.QWidget()
+        readout = QtWidgets.QVBoxLayout(rtk)
+        self.rtk_pose = message("等待读取定位")
+        self.rtk_receiver = message("等待读取接收机")
+        readout.addWidget(self.rtk_pose)
+        readout.addWidget(self.rtk_receiver)
+        readout.addStretch()
+        self.tabs.addTab(rtk, "RTK")
+        self.grasp = GraspPanel(self.events)
+        self.tabs.addTab(self.grasp, "视觉")
+        self.services = ServicePanel(os.environ.get("SLICER_SERVICE_RUN"))
+        self.tabs.addTab(self.services, "服务")
+        self.tabs.currentChanged.connect(
+            lambda index: self.services.enter() if self.tabs.widget(index) is self.services else None
+        )
+
+        actions = QtWidgets.QGridLayout()
+        self.hold_button = button("驻车 Hold", lambda: self.control("hold"), actions, 0, 0)
+        self.hold_button.setProperty("parking", True)
+        self.release_button = button("解除 Hold", lambda: self.control("release"), actions, 0, 1)
+        self.record_button = button("开始录包", self.record, actions, 0, 2)
+        self.notice = message("等待 ROS Master")
+        self.record_text = message()
+        actions.addWidget(self.notice, 0, 3)
+        actions.addWidget(self.record_text, 1, 0, 1, 4)
+        if not self.record_executable:
+            caption(self.record_text, "录包工具未配置")
+        actions.setColumnStretch(3, 1)
+        layout.addLayout(actions)
+        self.mode_changed()
+
+    def connect_ros(self):
+        try:
+            # The service panel remains available while the ROS Master is down.
+            rospy.init_node("slicer_operator_ui", disable_signals=True)
+            nav = actionlib.SimpleActionClient("/ugv/navigate", NavigateToPointAction)
+            grasp = actionlib.SimpleActionClient("/ugv/grasp", GraspAction) if GraspAction else None
+            self.events.put(("ros", (nav, grasp)))
+            self.subscribers = []
+            topics = [
+                ("/ugv/status", UgvStatus, "status"),
+                ("/ugv/navigate/status", GoalStatusArray, "navigation_status"),
+                ("/ugv/navigate/feedback", NavigateToPointActionFeedback, "other_feedback"),
+                ("/gnss/diagnostics", DiagnosticArray, "gnss"),
+                ("/gnss/fix_quality", DiagnosticArray, "sigma"),
+                ("/gnss/fix", NavSatFix, "fix"),
+                ("~map_point", PoseStamped, "map_point"),
+            ]
+            if grasp is not None:
+                topics.append(("/ugv/grasp/status", GoalStatusArray, "grasp_status"))
+            for topic, cls, event in topics:
+                subscription = rospy.Subscriber(topic, cls, lambda value, key=event: self.events.put((key, value)),
+                                                queue_size=1)
+                self.subscribers.append(subscription)
+        except (OSError, rospy.ROSException) as error:
+            self.events.put(("control", str(error)))
+
+    def connect_map(self):
+        self.preview_pub = rospy.Publisher("~target_preview", PoseStamped, queue_size=1, latch=True)
+        try:
+            self.map.connect_rviz(rospy.resolve_name("~map_point"), self.preview_pub.resolved_name)
+        except (ImportError, OSError, RuntimeError) as error:
+            caption(self.map.canvas, f"RViz 无法加载 · {error}")
 
     def update_buttons(self):
-        ready = fresh(self.last_status) and self.motion_available
         base = self.base
-        grasp_busy = self.grasp.update(
-            ready and not self.active and base is not None and base.stop_valid and base.stopped
+        current = self.ros_ready and base is not None and fresh(base.header.stamp)
+        ready = (current and base.base_online
+                 and not (base.hold or base.estop or base.manual_override))
+        grasp_busy = self.grasp.update_actions(bool(
+            ready and not self.active and base.stop_valid and base.stopped
             and base.velocity_valid and fresh(base.velocity.header.stamp, 0.45)
-            and not base.goal_id and not base.nav_goal_id and base.active_velocity_source == "zero"
+            and not (base.goal_id or base.nav_goal_id) and base.active_velocity_source == "zero"
+        ))
+        self.send_button.setEnabled(bool(
+            self.preview is not None and self.client is not None and fresh(self.nav_server_stamp, 1.0)
+            and not self.active and ready and not grasp_busy and base.active_velocity_source != "mission"
+        ))
+        self.cancel_button.setEnabled(self.active and not self.cancel_pending)
+        self.hold_button.setEnabled(self.ros_ready)
+        self.release_button.setEnabled(self.ros_ready)
+        self.record_button.setEnabled(bool(self.record_executable and self.ros_ready and not self.saving_recording))
+
+    def mode_changed(self, *_args):
+        local = self.mode.currentIndex() == 0
+        captions = ("x (m)", "y (m)", "椭球高 (m)", "航向 (rad)") if local else (
+            "纬度 (°)", "经度 (°)", "椭球高 (m)", "ENU 航向 (rad)"
         )
-        enabled = (
-            self.preview is not None and self.connected and not self.active
-            and ready and not grasp_busy and base.active_velocity_source != "mission"
-        )
-        self.send_button.state(["!disabled" if enabled else "disabled"])
-        self.cancel_button.state(["!disabled" if self.active else "disabled"])
+        for label, text in zip(self.labels, captions):
+            caption(label, text)
+        for field in self.fields[2:]:
+            field.setPlaceholderText("可选")
+        self.fields[2].setEnabled(not local)
+        self.verify.setEnabled(not local)
+        self.invalidate_preview()
 
     def invalidate_preview(self, *_args):
-        local = self.mode.get() == "本地 map"
-        labels = ("x (m)", "y (m)", "椭球高 (m，可选)", "航向 (rad，可选)") if local else (
-            "纬度 (°)", "经度 (°)", "椭球高 (m，可选)", "ENU 航向 (rad，可选)"
-        )
-        for label, caption in zip(self.labels, labels):
-            label.set(caption)
-        self.altitude_entry.state(["disabled" if local else "!disabled"])
-        self.verify_box.state(["disabled" if local else "!disabled"])
         self.preview = None
-        self.preview_text.set("")
+        self.map.show_marker(False)
+        caption(self.preview_text, "")
         self.update_buttons()
 
     def preview_goal(self):
         try:
             self.preview, description = target(
-                self.mode.get(), *(value.get() for value in self.values), self.verify.get()
+                self.mode.currentText(), *(field.text() for field in self.fields), self.verify.isChecked()
             )
             if self.preview.mode == Goal.WGS84:
-                description += "。投影位置由服务端反馈"
-            self.preview_text.set(description)
+                description += " · 投影由服务端反馈"
+            else:
+                self.publish_preview(self.preview.local_target)
+            caption(self.preview_text, description)
         except ValueError as error:
             self.preview = None
-            self.preview_text.set(f"输入无效 · {error}")
+            caption(self.preview_text, f"输入无效 · {error}")
         self.update_buttons()
 
-    def send(self):
-        if self.preview is None or self.active or not self.send_button.instate(["!disabled"]):
+    def map_point(self, pose):
+        try:
+            x, y = map_coordinates(pose)
+        except ValueError as error:
+            caption(self.notice, str(error))
             return
-        self.active = True
+        self.tabs.setCurrentIndex(0)
+        self.mode.setCurrentIndex(0)
+        self.fields[0].setText(f"{x:.4f}")
+        self.fields[1].setText(f"{y:.4f}")
+        self.fields[3].clear()
+        self.preview_goal()
+        self.map.select_move()
+
+    def publish_preview(self, pose):
+        if self.preview_pub is not None:
+            marker = PoseStamped(header=pose.header, pose=pose.pose)
+            self.preview_pub.publish(marker)
+            self.map.show_marker(True)
+
+    def send(self):
+        if not self.send_button.isEnabled():
+            return
+        self.active, self.cancel_pending = True, False
+        self.local_result = False
+        self.preview_mode = self.preview.mode
         self.client.send_goal(
             self.preview,
             done_cb=lambda state, result: self.events.put(("result", (state, result))),
             feedback_cb=lambda value: self.events.put(("feedback", value)),
         )
-        self.details.set("已发送目标，等待服务端")
+        caption(self.details, "已发送目标，等待服务端")
         self.update_buttons()
 
     def cancel(self):
-        if self.active:
+        if self.active and not self.cancel_pending:
+            self.cancel_pending = True
             self.client.cancel_goal()
-            self.details.set("已请求取消，等待停车结果")
+            caption(self.details, "已请求取消，等待停车结果")
+            self.update_buttons()
 
     def control(self, name):
         def call():
@@ -328,57 +506,103 @@ class Operator:
         Thread(target=call, daemon=True).start()
 
     def record(self):
-        if not self.record_executable:
-            return
         if self.recorder is not None:
-            if self.recorder.poll() is None:
-                os.killpg(self.recorder.pid, signal.SIGINT)
-                self.record_button.state(["disabled"])
-                self.record_text.set("正在保存录包")
+            self.stop_record()
+            self.saving_recording = True
+            caption(self.record_text, "正在保存录包")
             return
         try:
             self.recorder = subprocess.Popen(
-                [self.record_executable],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                [self.record_executable], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, start_new_session=True,
             )
         except OSError as error:
-            self.record_text.set(str(error))
+            caption(self.record_text, str(error))
             return
-        self.record_button.configure(text="结束录包")
-        self.record_text.set("正在启动录包")
+        self.record_button.setText("结束录包")
+        caption(self.record_text, "正在启动录包")
         Thread(target=self.read_record_output, args=(self.recorder,), daemon=True).start()
 
+    def stop_record(self):
+        if self.recorder is not None and self.recorder.poll() is None:
+            try:
+                os.killpg(self.recorder.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+
     def read_record_output(self, process):
-        for line in process.stdout:
-            if line.startswith("/"):
-                self.events.put(("recording", line.rstrip()))
+        with process.stdout as stream:
+            for line in stream:
+                if line.startswith("/"):
+                    self.events.put(("record_path", line.rstrip()))
+                elif line.strip():
+                    self.events.put(("record_line", line.strip()))
         self.events.put(("recorded", process.wait()))
 
-    def show_status(self, status):
-        self.base = status
-        self.last_status = status.header.stamp
-        blocked = status.hold or status.estop or status.manual_override
-        self.motion_available = status.base_online and not blocked
+    def show_status(self):
+        status = self.base
+        if status is None or not fresh(status.header.stamp):
+            if self.ros_ready:
+                caption(self.readouts[0], "状态未连接" if status is None else "状态过期", "warn")
+                for readout in self.readouts[1:]:
+                    caption(readout, "—", "warn")
+                caption(self.rtk_pose, "车端状态不可用")
+            return
+        if status.estop:
+            base, tone = "急停", "stop"
+        elif not status.base_online:
+            base, tone = "离线", "stop"
+        elif status.manual_override:
+            base, tone = "人工接管", "warn"
+        elif status.hold:
+            base, tone = "Hold", "warn"
+        else:
+            base, tone = "在线", "ok"
         fix = FIX.get(status.gnss_fix_type, "未知") if status.gnss_valid else "无有效观测"
-        stop = "已停稳" if status.stopped else "未停稳" if status.stop_valid else "停稳未知"
-        if not status.stop_valid:
-            stop = "停稳未知"
-        base = "急停" if status.estop else "人工接管" if status.manual_override else (
-            "Hold" if status.hold else "在线" if status.base_online else "离线"
-        )
-        pose = status.pose.pose.position
-        position = f"map ({pose.x:.2f}, {pose.y:.2f}) m" if status.pose_valid else "位姿无效"
-        self.status.set(
-            f"底盘 {base} · {stop} · GNSS {fix} · {ALIGNMENT.get(status.alignment_state, '未知')}\n"
-            f"{PHASES.get(status.phase, '未知')} · {position} · 速度源 "
-            f"{status.active_velocity_source or '无'}"
-        )
-        if (not self.active and status.last_result_valid and status.navigation_reason
+        speed = (f"{status.velocity.twist.linear.x:.2f} m/s"
+                 if status.velocity_valid and fresh(status.velocity.header.stamp) else "—")
+        caption(self.readouts[0], f"{base} · {stop_label(status.stop_valid, status.stopped)}", tone)
+        caption(self.readouts[1], fix, "ok" if fix == "Fixed" else "warn")
+        phases = PHASES.get(status.phase, "未知")
+        caption(self.readouts[2], phases, "ok" if status.phase == status.IDLE else "warn")
+        source = status.active_velocity_source or "—"
+        caption(self.readouts[3], f"{speed} · {source}", "ok" if status.velocity_valid else "warn")
+
+        align = ALIGNMENT.get(status.alignment_state, "未知")
+        position = status.pose.pose.position
+        pose = f"{position.x:.2f}, {position.y:.2f} m" if status.pose_valid else "—"
+        wgs84 = (f"{status.wgs84_latitude_deg:.8f}°, {status.wgs84_longitude_deg:.8f}°"
+                 if status.wgs84_valid else "—")
+        yaw = f"{math.degrees(status.yaw_enu_rad):.1f}°" if status.yaw_enu_valid else "—"
+        observed_age = observed_time(status.gnss_stamp) if status.gnss_valid else "—"
+        caption(self.rtk_pose, f"配准 {align} · 版本 {status.transform_version}\n"
+                f"地理观测 {observed_age}\nmap {pose}\n车体 WGS84 {wgs84}\nENU 航向 {yaw}\n"
+                f"{status.geographic_reason}")
+        if (not self.active and not self.local_result and status.last_result_valid and status.navigation_reason
                 and status.last_goal_id != self.last_displayed_result):
             result = RESULT_NAMES.get(status.last_result_code, status.last_result_code)
-            self.details.set(f"{result} · {status.navigation_reason}")
+            caption(self.details, f"{result} · {status.navigation_reason}")
             self.last_displayed_result = status.last_goal_id
+
+    def show_receiver(self):
+        info, fields = receiver_fields(self.gnss) if self.gnss and fresh(self.gnss.header.stamp, 2.5) else ("", {})
+        quality = {}
+        if (self.sigma and self.fix and self.sigma.header.stamp == self.fix.header.stamp
+                and fresh(self.fix.header.stamp, 2.5)):
+            _, quality = receiver_fields(self.sigma)
+        correction = fields.get("rtcm_serial_write_age_s")
+        correction = f"{correction} s" if value_text(correction) != "—" else "—"
+        ntrip = ("已连接" if fields.get("ntrip_connected") == "true"
+                 else "未连接" if fields.get("ntrip_enabled") == "true" else "—")
+        geodetic = "—"
+        if self.fix and fresh(self.fix.header.stamp, 2.5) and self.fix.status.status != NavSatStatus.STATUS_NO_FIX:
+            geodetic = f"{self.fix.latitude:.8f}°, {self.fix.longitude:.8f}°"
+        sigma_e = value_text(quality.get("receiver_gst_lon_std_m"))
+        sigma_n = value_text(quality.get("receiver_gst_lat_std_m"))
+        caption(self.rtk_receiver, f"接收机 {info or '—'}\n"
+                f"卫星 {value_text(fields.get('satellites'))} · HDOP {value_text(fields.get('hdop'))}\n"
+                f"NTRIP {ntrip} · 差分 {correction}\n天线 WGS84 {geodetic}\n"
+                f"同历元 GST 1σ  东 {sigma_e} m · 北 {sigma_n} m")
 
     def drain_events(self):
         while True:
@@ -386,59 +610,107 @@ class Operator:
                 event, value = self.events.get_nowait()
             except Empty:
                 break
-            if event == "connected":
-                self.connected = True
+            if event == "ros":
+                self.client, self.grasp.client = value
+                self.ros_ready = True
+                caption(self.notice, "ROS 已连接")
+                self.connect_map()
             elif event == "status":
-                self.show_status(value)
+                self.base = value
+            elif event == "navigation_status":
+                self.nav_server_stamp = value.header.stamp
+            elif event in ("gnss", "sigma", "fix"):
+                setattr(self, event, value)
+            elif event == "map_point":
+                self.map_point(value)
             elif event == "feedback":
-                caption = PHASES.get(value.phase, "未知")
-                distance = f" · 剩余 {value.remaining_distance_m:.2f} m" if value.remaining_distance_valid else ""
-                self.details.set(f"{caption}{distance} · {value.reason}")
+                caption(self.details, progress_text(value))
                 if value.projected_target_valid:
                     point = value.projected_target.pose.position
-                    self.preview_text.set(
-                        f"map ({point.x:.3f}, {point.y:.3f}) m · 变换 {value.transform_version}"
-                    )
-                elif self.mode.get() == "WGS84":
-                    self.preview_text.set("投影位置待配准确定")
+                    self.publish_preview(value.projected_target)
+                    caption(self.preview_text, f"map ({point.x:.3f}, {point.y:.3f}) m · 变换 {value.transform_version}")
+                elif self.preview_mode == Goal.WGS84:
+                    caption(self.preview_text, "投影位置待配准确定")
+            elif event == "other_feedback":
+                if (not self.active and self.base and self.base.goal_id
+                        and value.status.goal_id.id == self.base.goal_id and fresh(value.header.stamp)):
+                    self.local_result = False
+                    caption(self.details, progress_text(value.feedback))
             elif event == "result":
-                self.active = False
-                self.details.set(result_text(*value))
-            elif event == "grasp_connected":
-                self.grasp.connected = True
+                self.active = self.cancel_pending = False
+                self.local_result = True
+                caption(self.details, result_text(*value))
+                if self.base is not None:
+                    self.last_displayed_result = self.base.last_goal_id
             elif event == "grasp_status":
                 self.grasp.server_status = value
             elif event == "grasp_result":
                 self.grasp.finish(*value)
             elif event == "control":
-                self.details.set(value)
-            elif event == "recording":
+                caption(self.notice, value)
+            elif event == "record_path":
                 self.record_path = value
-                self.record_text.set(f"正在录包 · {value}")
+                caption(self.record_text, f"正在启动录包 · {value}")
+            elif event == "record_line" and not self.record_path:
+                caption(self.record_text, value)
             elif event == "recorded":
                 self.recorder = None
-                self.record_button.configure(text="开始录包")
-                self.record_button.state(["!disabled"])
-                caption = "录包已结束" if value in (0, -signal.SIGINT, 130) else f"录包退出码 {value}"
-                self.record_text.set(f"{caption} · {self.record_path}")
-        if not self.last_status.is_zero() and (rospy.Time.now() - self.last_status).to_sec() > 0.5:
-            self.status.set("状态已过期")
+                self.saving_recording = False
+                self.recording_active = False
+                self.record_button.setText("开始录包")
+                saved = self.record_path and any(Path(self.record_path).glob("*.bag"))
+                if value in (0, -signal.SIGINT, 130):
+                    result = "录包已结束" if saved else "录包未生成"
+                else:
+                    result = f"录包退出码 {value}"
+                caption(self.record_text, " · ".join(filter(None, (result, self.record_path))))
+                self.record_path = ""
+        if (self.record_path and not self.recording_active and not self.saving_recording
+                and any(Path(self.record_path).glob("*.bag.active"))):
+            self.recording_active = True
+            caption(self.record_text, f"正在录包 · {self.record_path}")
+        self.show_status()
+        self.show_receiver()
         self.update_buttons()
         if rospy.is_shutdown():
-            self.root.destroy()
-        else:
-            self.root.after(80, self.drain_events)
+            QtWidgets.QApplication.quit()
 
-    def close(self):
+    def shutdown(self):
+        if self.closed:
+            return
+        self.closed = True
+        self.timer.stop()
         self.cancel()
         self.grasp.cancel()
-        if self.recorder is not None and self.recorder.poll() is None:
-            os.killpg(self.recorder.pid, signal.SIGINT)
-        self.root.destroy()
+        self.stop_record()
+        self.map.close_map()
+
+    def closeEvent(self, event):
+        if self.services.operation in ("start", "stop", "restart"):
+            self.tabs.setCurrentWidget(self.services)
+            event.ignore()
+            return
+        self.shutdown()
+        event.accept()
+
+
+def observed_time(stamp):
+    age = (rospy.Time.now() - stamp).to_sec()
+    return f"{age:.1f} s 前" if not stamp.is_zero() and age >= 0.0 else "—"
+
+
+def main():
+    app = QtWidgets.QApplication(sys.argv[:1])
+    signal.signal(signal.SIGINT, lambda *_args: app.quit())
+    signal.signal(signal.SIGTERM, lambda *_args: app.quit())
+    window = Operator()
+    window.showMaximized()
+    try:
+        return app.exec_()
+    finally:
+        window.shutdown()
+        rospy.signal_shutdown("Operator UI closed")
 
 
 if __name__ == "__main__":
-    rospy.init_node("slicer_operator_ui")
-    window = tk.Tk()
-    Operator(window)
-    window.mainloop()
+    raise SystemExit(main())
