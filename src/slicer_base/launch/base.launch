@@ -5,20 +5,25 @@
   <arg name="driver_mock" default="false"/>
   <arg name="gamepad_enabled" default="$(arg hardware_enabled)"/>
   <arg name="gamepad_device" default=""/>
+  <arg name="required" default="false"/>
+  <arg name="estop_marker" default=""/>
   <arg name="costmap_topic" default="/ugv/internal/move_base/local_costmap/costmap"/>
   <arg name="lio_topic" default="/lio/odom"/>
 
-  <node pkg="slicer_base" type="velocity_mux.py" name="slicer_velocity_mux" output="screen">
+  <node pkg="slicer_base" type="velocity_mux.py" name="slicer_velocity_mux" output="screen"
+        required="$(arg required)">
     <param name="hardware_config" value="$(arg hardware_config)"/>
     <param name="costmap_topic" value="$(arg costmap_topic)"/>
     <param name="lio_topic" value="$(arg lio_topic)"/>
+    <param name="estop_marker" value="$(arg estop_marker)"/>
   </node>
   <node if="$(arg gamepad_enabled)" pkg="slicer_base" type="gamepad_node.py" name="slicer_gamepad" output="screen">
     <param name="config" value="$(find slicer_base)/config/gamepad.yaml"/>
     <param name="device" value="$(arg gamepad_device)"/>
   </node>
   <group if="$(eval arg('hardware_enabled') or arg('driver_mock'))">
-    <node pkg="slicer_base" type="driver_node.py" name="slicer_base_driver" output="screen">
+    <node pkg="slicer_base" type="driver_node.py" name="slicer_base_driver" output="screen"
+          required="$(arg required)">
       <param name="mock" value="$(arg driver_mock)"/>
       <param name="hardware_config" value="$(arg hardware_config)"/>
       <param name="hardware_root" value="$(arg hardware_root)"/>

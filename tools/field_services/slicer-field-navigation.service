@@ -1,0 +1,11 @@
+[Unit]
+Description=Slicer navigation
+BindsTo=slicer-field-base.service
+After=slicer-field-base.service slicer-field-localization.service
+
+[Service]
+Type=exec
+ExecStart=%h/.config/slicer/services/workspace/current/service/run_unit navigation
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=20s

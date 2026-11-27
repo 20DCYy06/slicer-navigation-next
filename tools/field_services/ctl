@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+release=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+workspace="$HOME/.config/slicer/services/workspace"
+runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+pin="$runtime/slicer-field/release"
+roles=(master base localization navigation vision)
+action=${1:-}
+role=${2:-}
+
+usage() {
+    printf '%s\n' 'Usage: ./current/run service {status|start|stop|restart|logs} [master|base|localization|navigation|vision]' >&2
+    exit 2
+}
+
+error() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+if [[ "$action" == installed ]]; then
+    [[ -L "$workspace" ]]
+    exit
+fi
+if [[ "$action" == verify-ui ]]; then
+    if [[ -f "$pin" && $(<"$pin") != "$release" ]]; then
+        error 'The running services belong to a different release. Open the pinned UI or restart the master after stopping it safely.'
+    fi
+    exit 0
+fi
+
+(( $# <= 2 )) || usage
+case "$role" in
+    "") ;;
+    master|base|localization|navigation|vision) roles=("$role") ;;
+    *) usage ;;
+esac
+case "$action" in
+    status)
+        for item in "${roles[@]}"; do
+            state=not-installed
+            if [[ -L "$workspace" ]]; then
+                props=$(systemctl --user show -p LoadState -p ActiveState "slicer-field-$item.service" || true)
+                if [[ "$props" != *LoadState=not-found* ]]; then
+                    active_state=$(sed -n 's/^ActiveState=//p' <<< "$props")
+                    state=${active_state:-unavailable}
+                fi
+            fi
+            printf '%s %s\n' "$item" "$state"
+        done
+        if [[ -f "$pin" && $(<"$pin") != "$release" ]]; then
+            printf 'Managed services still use %s\n' "$(<"$pin")" >&2
+        fi
+        ;;
+    logs)
+        units=()
+        for item in "${roles[@]}"; do
+            units+=("--user-unit=slicer-field-$item.service")
+        done
+        exec journalctl --no-pager -n 80 "${units[@]}"
+        ;;
+    start|stop|restart)
+        [[ -n "$role" ]] || usage
+        [[ -L "$workspace" ]] || error 'Managed services are not installed. Run tools/install_field_services.sh from the field workspace.'
+        [[ $(realpath -e "$workspace/current") == "$release" ]] || error 'Use the service command from the installed workspace current release.'
+        exec 9>"$runtime/slicer-field-control.lock"
+        flock -x 9
+        target="slicer-field-$role.service"
+        if [[ "$action" != stop && "$role" != master && -f "$pin" && $(<"$pin") != "$release" ]]; then
+            error 'Stop the running master before starting services from a new current release.'
+        fi
+        target_state=$(systemctl --user show -p ActiveState --value "$target")
+        if [[ "$action" != start && "$target_state" =~ ^(active|activating|reloading)$ ]] &&
+                systemctl --user is-active --quiet slicer-field-base.service; then
+            [[ -f "$pin" ]] || error 'Cannot identify the active base release to confirm a safe stop.'
+            active_release=$(<"$pin")
+            (
+                source "$active_release/install/setup.bash"
+                unset ROS_HOSTNAME
+                export ROS_MASTER_URI=http://localhost:11311 ROS_IP=127.0.0.1
+                timeout 12s "$active_release/install/lib/slicer_bringup/quiesce_node.py"
+            )
+        fi
+        if [[ "$action" == start && "$role" == master && -f "$pin" && $(<"$pin") != "$release" ]]; then
+            error 'Stop the running master before starting the newly selected release.'
+        fi
+        exec systemctl --user "$action" "$target"
+        ;;
+    *) usage ;;
+esac

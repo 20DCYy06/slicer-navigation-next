@@ -3,6 +3,6 @@ project(slicer_bringup)
 find_package(catkin REQUIRED)
 catkin_package()
 catkin_install_python(PROGRAMS
-  scripts/mock_node.py scripts/status_node.py scripts/record_run.py
+  scripts/mock_node.py scripts/status_node.py scripts/record_run.py scripts/quiesce_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(DIRECTORY config launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

@@ -1,0 +1,11 @@
+[Unit]
+Description=Slicer visual grasp
+BindsTo=slicer-field-base.service
+After=slicer-field-base.service
+
+[Service]
+Type=exec
+ExecStart=%h/.config/slicer/services/workspace/current/service/run_unit vision
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=20s

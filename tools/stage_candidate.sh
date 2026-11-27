@@ -33,6 +33,7 @@ trap 'rm -rf -- "$stage"' EXIT
 cp -a install "$stage/install"
 cp -a docs "$stage/docs"
 install -m 0755 tools/run_field.sh "$stage/run"
+cp -a tools/field_services "$stage/service"
 /usr/bin/python3 - "$stage" "$revision" <<'PY'
 from datetime import datetime, timezone
 import hashlib

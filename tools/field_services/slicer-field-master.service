@@ -1,0 +1,15 @@
+[Unit]
+Description=Slicer ROS master
+
+[Service]
+Type=exec
+RuntimeDirectory=slicer-field
+ExecStart=%h/.config/slicer/services/workspace/current/service/run_unit master
+Restart=always
+RestartSec=2s
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=default.target
