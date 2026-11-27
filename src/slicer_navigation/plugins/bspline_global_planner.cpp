@@ -111,6 +111,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     std::vector<Point2> retained_suffix;
     std::vector<geometry_msgs::PoseStamped> original;
     bool used_tracking_reserve = false;
+    bool straight_observed = false;
     if (cost_field_enabled_) {
       grid = snapshot();
       double inscribed, circumscribed;
@@ -158,12 +159,43 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
         return pathFeasible(original, half_cell, feasible);
       };
       const auto solve = [&] {
-        const auto reference = observedReference(retained_suffix, grid.getResolution() * .5, feasible);
         search_grid_ = grid;
         auto* costs = search_grid_.getCharMap();
         if (cost_options_.obstacle_weight > 0.)
           preferObstacleDistance(grid.getCharMap(), costs, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
                                  grid.getResolution(), clearance, cost_options_.obstacle_soft_radius_m);
+        // In fully observed free space, grid traceback and route preference
+        // can retain a bend where the checked straight segment needs none.
+        const auto clear = [&](const Point2& p, bool) {
+          unsigned int x, y;
+          return search_grid_.worldToMap(p.x, p.y, x, y) &&
+                 !hard[y * grid.getSizeInCellsX() + x] &&
+                 search_grid_.getCost(x, y) == costmap_2d::FREE_SPACE;
+        };
+        const auto from = point(start), delta = point(goal) - from;
+        const double half_cell = grid.getResolution() * .5;
+        if (segmentFeasible(from, point(goal), half_cell, false, clear)) {
+          original.clear();
+          original.push_back(start);
+          const int steps = std::max(1, static_cast<int>(std::ceil(norm(delta) / sample_spacing_)));
+          const double yaw = std::atan2(delta.y, delta.x);
+          auto pose = start;
+          pose.header.stamp = ros::Time::now();
+          pose.pose.position.z = 0.;
+          pose.pose.orientation = tf2::toMsg(tf2::Quaternion(tf2::Vector3(0., 0., 1.), yaw));
+          for (int i = 1; i < steps; ++i) {
+            const auto p = from + delta * (static_cast<double>(i) / steps);
+            pose.pose.position.x = p.x;
+            pose.pose.position.y = p.y;
+            original.push_back(pose);
+          }
+          original.push_back(goal);
+          if (pathFeasible(original, half_cell, clear)) {
+            straight_observed = true;
+            return true;
+          }
+        }
+        const auto reference = observedReference(retained_suffix, half_cell, feasible);
         encodeContinuityCosts(costs, hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
             grid.getResolution(), {grid.getOriginX(), grid.getOriginY()}, point(start),
             reference, cost_options_, costs);
@@ -193,7 +225,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     if (cost_field_enabled_ && side_enabled_) {
       std::vector<Point2> candidate;
       for (const auto& pose : original) candidate.push_back(point(pose));
-      if (retained_suffix.size() >= 2) {
+      if (!straight_observed && retained_suffix.size() >= 2) {
         retained_suffix.insert(retained_suffix.begin(), point(start));
         if (task_side_.keep(candidate, routeLength(retained_suffix))) {
           std::vector<geometry_msgs::PoseStamped> retained;
